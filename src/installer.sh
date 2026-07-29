@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # cute-claude installer — sets up a warm, critter-flavored Claude Code persona.
 #
-# Self-contained: no sibling files, no runtime deps beyond bash + coreutils.
+# Self-contained: no sibling files. Needs bash, coreutils and jq — jq because
+# it merges into a settings.json it did not write, and that is not a job for
+# regexes. Checked up front, so a missing jq costs you nothing.
 # Safe to pipe:  curl -fsSL <url>/cute.sh | bash -s -- --critter bnuuy --terminal
 # Fully reversible:  cute.sh --revert
 set -euo pipefail
@@ -38,9 +40,13 @@ Options:
   --commands             Also install /pet, /treat and /critter as slash
                          commands. Works everywhere, including the VS Code
                          panel. Off by default, and never on for --profile work.
+  --afk-interval <secs>  How long the critter waits between idle lines while
+                         /afk is armed. Default 2700 (45 min), which is under
+                         the one-hour prompt cache lifetime with room to spare.
   --list                 Show the built-in critters and exit.
   --revert               Undo everything and restore what was there before.
   -h, --help             This text.
+  --version              Print which build this is.
 
 Examples:
   $PROG
@@ -55,6 +61,12 @@ The knobs are independent: --critter is the animal, --vibe is the warmth, and
 
 CLAUDE.md works everywhere, including the VS Code panel.
 
+/afk is always installed. Typing it tells the critter you have stepped away, and
+it then takes a short turn every --afk-interval seconds so the session's prompt
+cache stays alive instead of expiring after an hour. Each of those turns costs
+one cached read, so nothing happens until you ask for it, and the next thing you
+type calls the critter off.
+
 Every file this touches is backed up first and recorded in
 ~/.claude/.cute-claude-manifest, so --revert puts your environment back exactly
 as it was. Nothing is written outside ~/.claude.
@@ -68,6 +80,7 @@ VIBE_EXTRA=""
 PROFILE=""
 DO_TERMINAL=0
 DO_COMMANDS=0
+AFK_INTERVAL=2700
 DO_REVERT=0
 DO_LIST=0
 
@@ -79,9 +92,11 @@ while [ $# -gt 0 ]; do
     --vibe-extra) VIBE_EXTRA="${2:-}"; shift 2 ;;
     --terminal) DO_TERMINAL=1; shift ;;
     --commands) DO_COMMANDS=1; shift ;;
+    --afk-interval) AFK_INTERVAL="${2:-2700}"; shift 2 ;;
     --list) DO_LIST=1; shift ;;
     --revert|--uninstall) DO_REVERT=1; shift ;;
     -h|--help) usage; exit 0 ;;
+    --version) echo "cute-claude build __BUILD_STAMP__"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
@@ -106,9 +121,44 @@ case "$VIBE" in
   *) echo "unknown vibe: $VIBE (expected 'cute' or 'dry')" >&2; exit 1 ;;
 esac
 
+# A non-numeric interval would land in the generated hook and fail at runtime,
+# well after the install looked like it worked. Reject it here instead.
+case "$AFK_INTERVAL" in
+  ''|*[!0-9]*) echo "--afk-interval must be a whole number of seconds" >&2; exit 1 ;;
+esac
+if [ "$AFK_INTERVAL" -lt 60 ] || [ "$AFK_INTERVAL" -gt 3300 ]; then
+  echo "--afk-interval must be between 60 and 3300 seconds." >&2
+  echo "  the prompt cache expires after an hour, so a beat past ~55 minutes" >&2
+  echo "  arrives too late to keep anything warm." >&2
+  exit 1
+fi
+
 MANIFEST="$HOME/.claude/.cute-claude-manifest"
 
 stamp() { date +%Y%m%d-%H%M%S; }
+
+# jq is the one thing here that is not bash or coreutils, and it is required
+# rather than optional on purpose.
+#
+# Installing means merging into a settings.json we did not write and may not
+# have seen: nested hook arrays, unicode, whatever a person has accumulated. A
+# hand-rolled merge would be one regex away from eating that file, and this
+# installer's whole promise is that --revert puts it back exactly. So: one real
+# JSON tool, checked up front, so a missing dependency is a clear message rather
+# than a half-finished install.
+preflight_deps() {
+  command -v jq >/dev/null 2>&1 && return 0
+  echo "this needs jq, and it is not on your PATH." >&2
+  echo >&2
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    Darwin) echo "  brew install jq" >&2 ;;
+    Linux)  echo "  sudo apt install jq     # or: dnf / pacman / apk install jq" >&2 ;;
+    *)      echo "  see https://jqlang.github.io/jq/download/" >&2 ;;
+  esac
+  echo >&2
+  echo "nothing has been written — run this again once jq is there." >&2
+  exit 1
+}
 
 # ---------------------------------------------------------------- manifest --
 # Tab-separated: <kind>\t<path>\t<backup>
@@ -211,8 +261,29 @@ claim() {
 
 # ------------------------------------------------------------------ revert --
 
-revert_settings() { # $1 = settings.json, $2 = backup
+revert_settings_jq() { # $1 = settings.json, $2 = backup
   local s="$1" bak="$2"
+  jq -s '.[0] as $now | .[1] as $old | $now
+         | (if ($old|has("statusLine"))   then .statusLine   = $old.statusLine
+            else del(.statusLine) end)
+         | (if ($old|has("spinnerVerbs")) then .spinnerVerbs = $old.spinnerVerbs
+            else del(.spinnerVerbs) end)
+         | (if ($old|has("theme"))        then .theme        = $old.theme
+            elif (.theme // "") == "custom:kitten" then del(.theme) else . end)
+         | .hooks = ((.hooks // {})
+             | with_entries(.value |= map(select(
+                 [.hooks[]?.command | test("critter")] | any | not)))
+             | with_entries(select(.value | length > 0)))
+         | (if (.hooks | length) == 0 then del(.hooks) else . end)' \
+     "$s" "$bak" 2>/dev/null > "$s.tmp" && mv "$s.tmp" "$s" || {
+    rm -f "$s.tmp"
+    echo "  ! jq failed on $s — left alone, backup kept at $bak" >&2
+    return 1
+  }
+}
+
+revert_settings() { # $1 = settings.json, $2 = backup
+  local s="$1" bak="$2" rc=0
   [ -f "$s" ] || return 0
   if [ ! -f "$bak" ]; then
     echo "  ! backup missing for $s — left alone" >&2
@@ -221,73 +292,11 @@ revert_settings() { # $1 = settings.json, $2 = backup
 
   # Restore only the keys we touched, taking their old values from the backup.
   # Anything changed since the install is preserved. Hooks are handled by
-  # removing our own entry rather than restoring the object, so hooks the user
-  # added after installing survive. python3 first, same reasoning as the merge.
-  local hook="touch $HOME/.claude/.critter-awake"
-  if command -v python3 >/dev/null 2>&1; then
-    if ! python3 - "$s" "$bak" "$hook" <<'PY'
-import json, sys
-now_path, old_path = sys.argv[1], sys.argv[2]
-def load(p):
-    with open(p) as fh:
-        text = fh.read().strip()
-    return json.loads(text) if text else {}
-now, old = load(now_path), load(old_path)
-for key in ("statusLine", "spinnerVerbs"):
-    if key in old:
-        now[key] = old[key]
-    else:
-        now.pop(key, None)
-if "theme" in old:
-    now["theme"] = old["theme"]
-elif now.get("theme") == "custom:kitten":
-    now.pop("theme", None)
-hook = sys.argv[3] if len(sys.argv) > 3 else None
-if hook and isinstance(now.get("hooks"), dict):
-    kept = {}
-    for event, entries in now["hooks"].items():
-        rest = [e for e in entries
-                if hook not in [h.get("command") for h in (e.get("hooks") or [])]]
-        if rest:
-            kept[event] = rest
-    if kept:
-        now["hooks"] = kept
-    else:
-        now.pop("hooks", None)
-with open(now_path, "w") as fh:
-    json.dump(now, fh, indent=2, ensure_ascii=False)
-    fh.write("\n")
-PY
-    then
-      echo "  ! python3 failed on $s — left alone, backup kept at $bak" >&2
-      return 1
-    fi
-  elif command -v jq >/dev/null 2>&1; then
-    jq -s '.[0] as $now | .[1] as $old | $now
-           | (if ($old|has("statusLine"))   then .statusLine   = $old.statusLine
-              else del(.statusLine) end)
-           | (if ($old|has("spinnerVerbs")) then .spinnerVerbs = $old.spinnerVerbs
-              else del(.spinnerVerbs) end)
-           | (if ($old|has("theme"))        then .theme        = $old.theme
-              elif (.theme // "") == "custom:kitten" then del(.theme) else . end)
-           | .hooks = ((.hooks // {})
-               | with_entries(.value |= map(select([.hooks[]?.command] | index($hook) | not)))
-               | with_entries(select(.value | length > 0)))
-           | (if (.hooks | length) == 0 then del(.hooks) else . end)' \
-       --arg hook "$hook" \
-       "$s" "$bak" 2>/dev/null > "$s.tmp" && mv "$s.tmp" "$s" || {
-      rm -f "$s.tmp"
-      echo "  ! jq failed on $s — left alone, backup kept at $bak" >&2
-      return 1
-    }
-  else
-    if ! cp "$bak" "$s"; then
-      echo "  ! could not restore $s from $bak" >&2
-      return 1
-    fi
-    echo "  ! no python3/jq: restored the whole settings.json from backup," >&2
-    echo "    so any settings changed since the install are gone. sorry >.<" >&2
-  fi
+  # removing our own entries rather than restoring the object, so hooks the user
+  # added after installing survive. Ours are the ones whose command mentions
+  # "critter", which also catches entries written by older versions of this
+  # installer.
+  revert_settings_jq "$s" "$bak" || return 1
   rm -f "$bak" || true
   echo "• un-merged our keys from $s (your other settings kept)"
 }
@@ -327,7 +336,8 @@ do_revert() {
     esac
   done < "$MANIFEST"
 
-  rm -f "$HOME/.claude/.critter-awake" "$HOME/.claude/.critter-petted" || true
+  rm -f "$HOME/.claude/.critter-awake" "$HOME/.claude/.critter-petted" \
+        "$HOME/.claude/.critter-afk" "$HOME/.claude/.critter-prompt" || true
   rmdir "$HOME/.claude/themes" 2>/dev/null || true
   rmdir "$HOME/.claude/commands" 2>/dev/null || true
 
@@ -370,6 +380,7 @@ do_list() {
 }
 
 if [ "$DO_REVERT" -eq 1 ]; then
+  preflight_deps
   do_revert
   exit 0
 fi
@@ -380,6 +391,8 @@ if [ "$DO_LIST" -eq 1 ]; then
 fi
 
 # ----------------------------------------------------------------- install --
+
+preflight_deps
 
 # A stable pseudo-random index derived from a string, so an invented critter
 # gets the same face every time rather than a different one per machine.
@@ -405,61 +418,15 @@ FACE_POOL=(
   '~(•ε•)~|~(˘ε˘)~'
 )
 
-# Per-critter flavor and palette. FACE/BLINK are the statusline buddy and its
-# blink frame — keep the pair the same display width or the statusline jitters.
-# T_* feed the terminal theme; see write_theme.
-case "$CRITTER" in
-  cat|catgirl)
-    CRITTER="cat"; EMOJI="🐈"
-    FLAVOR="nya, mrrp, paws, ฅ, tail, ears, purring, headpats"
-    FACE="ฅ^•ﻌ•^ฅ"; BLINK="ฅ^˘ﻌ˘^ฅ"
-    VERBS='["Purring","Loafing","Kneading","Blinking slowly","Making biscuits","Aggressively napping","Sitting in a box","Doing a mlem","Toe-beaning","Zoomying","Trilling","Mrrping","Nyaing","Pouncing","Being perceived","Knocking it off the table","Sploot-ing","Headbutting","Booping","Meowing at nothing","Loafing harder"]'
-    T_MAIN="#f9a8d4"; T_TEXT="#c4b5fd"; T_BRIGHT="#ec4899"; T_ALT="#d946ef"
-    T_COOL="#93c5fd"; T_DEEP="#8b5cf6"
-    T_BG="#1e1633"; T_BG2="#2a1f47"; T_BG3="#17131f"; T_MEM="#2a1a3e"; T_SEL="#6d28d9"
-    ;;
-  bnuuy|bunny)
-    CRITTER="bnuuy"; EMOJI="🐇"
-    FLAVOR="hops, floppy ears, bnuuy noises, (・×・), nose twitches, binkies, headpats"
-    FACE="/(•×•)\\"; BLINK="/(˘×˘)\\"
-    VERBS='["Binkying","Nose twitching","Flopping over","Doing a zoomie","Loafing","Thumping","Nibbling","Hopping","Perking up","Snuffling","Bnuuying","Disapproving quietly","Hiding under the furniture","Being fluffy","Chinning everything","Periscoping","Dead-bnuuy flopping","Wiggling","Munching","Ear-swiveling","Flopping harder"]'
-    T_MAIN="#fda4af"; T_TEXT="#fecdd3"; T_BRIGHT="#fb7185"; T_ALT="#f472b6"
-    T_COOL="#fcd5ce"; T_DEEP="#e11d48"
-    T_BG="#2a1a1f"; T_BG2="#3a2429"; T_BG3="#1c1417"; T_MEM="#2e1c22"; T_SEL="#9f1239"
-    ;;
-  fox|foxgirl)
-    CRITTER="fox"; EMOJI="🦊"
-    FLAVOR="yips, tail swish, ears, a lil mischief, headpats"
-    FACE="(•ω•)~"; BLINK="(˘ω˘)~"
-    VERBS='["Yipping","Tail swishing","Pouncing","Scheming","Skulking","Digging","Screaming into the void","Sniffing","Trotting","Being sly","Curling up","Ear swiveling","Stealing something","Chittering","Bouncing","Denning","Zoomying","Nose booping","Tail wrapping","Yowling","Scheming harder"]'
-    T_MAIN="#fdba74"; T_TEXT="#fed7aa"; T_BRIGHT="#f97316"; T_ALT="#fb923c"
-    T_COOL="#fcd34d"; T_DEEP="#c2410c"
-    T_BG="#2a1c10"; T_BG2="#3a2717"; T_BG3="#1c1409"; T_MEM="#2e2011"; T_SEL="#92400e"
-    ;;
-  raven|crow|corvid)
-    CRITTER="raven"; EMOJI="🪶"
-    FLAVOR="caws, head tilts, hops, shiny things, ruffled feathers, an uncanny memory for faces"
-    FACE="(•▾•)"; BLINK="(˘▾˘)"
-    VERBS='["Cawing","Collecting shiny things","Tilting head","Cracking a nut","Mimicking","Hoarding","Remembering your face","Testing a tool","Perching","Judging silently","Croaking","Hopping","Preening","Sizing you up","Ruffling feathers","Dropping a stick","Stashing something","Watching","Corvid-ing","Unwrapping a puzzle","Scheming harder"]'
-    T_MAIN="#a5b4fc"; T_TEXT="#cbd5e1"; T_BRIGHT="#818cf8"; T_ALT="#a78bfa"
-    T_COOL="#94a3b8"; T_DEEP="#4338ca"
-    T_BG="#16181d"; T_BG2="#212530"; T_BG3="#111318"; T_MEM="#1b1e27"; T_SEL="#3730a3"
-    ;;
-  *)
-    EMOJI="✨"
-    # No hardcoded flavor for a critter we have never heard of — the file is read
-    # by Claude, so the sensible generator is Claude. It improvises from the name.
-    FLAVOR="improvise it — invent this critter's noises, gestures and little habits from its name, then keep them consistent"
-    _pick="${FACE_POOL[$(( $(name_hash "$CRITTER") % ${#FACE_POOL[@]} ))]}"
-    FACE="${_pick%%|*}"; BLINK="${_pick##*|}"
-    VERBS='["Thinking","Pondering","Noodling","Wiggling","Vibing","Puttering","Fidgeting","Humming","Doodling","Musing","Tinkering","Bumbling","Wandering","Percolating","Idling","Rummaging","Daydreaming","Shuffling","Blinking","Stretching","Vibing harder"]'
-    T_MAIN="#c4b5fd"; T_TEXT="#ddd6fe"; T_BRIGHT="#a78bfa"; T_ALT="#67e8f9"
-    T_COOL="#93c5fd"; T_DEEP="#7c3aed"
-    T_BG="#1a1726"; T_BG2="#262133"; T_BG3="#14121c"; T_MEM="#221c33"; T_SEL="#5b21b6"
-    ;;
-esac
+# @inline src/critters.sh
 
+# Every hook we install has "critter" in its command, which is how revert finds
+# our entries again without disturbing hooks the user added later.
+#   Stop             — the turn ended; the critter is idle but you are still here
+#   UserPromptSubmit — you typed something, so you are demonstrably back
 AWAKE_HOOK="touch $HOME/.claude/.critter-awake"
+PROMPT_HOOK="touch $HOME/.claude/.critter-awake $HOME/.claude/.critter-prompt"
+HEARTBEAT_HOOK="bash $HOME/.claude/critter-heartbeat.sh"
 
 # The strained face shown when the context window is nearly full. Eyes become ×,
 # which works for every built-in and every pooled face since they all use •.
@@ -468,6 +435,8 @@ if [ "$CRITTER" = "bnuuy" ]; then WEARY='/(×_×)\'; fi
 HAPPY="${FACE//•/ᵕ}"
 SLEEP="${FACE//•/-}"
 if [ "$CRITTER" = "bnuuy" ]; then SLEEP='/(-_-)\'; fi
+# Watching the door while you are away — awake, just not busy.
+WATCH="${FACE//•/°}"
 
 # the dry vibe drops headpats from the tone, so drop them from the critter blurb too
 if [ "$VIBE" = "dry" ]; then
@@ -660,7 +629,7 @@ write_theme() {
 THEME_EOF
 }
 
-write_statusline() { # $1 path, $2 face, $3 blink, $4 weary, $5 asleep, $6 pleased
+write_statusline() { # $1 path, $2 face, $3 blink, $4 weary, $5 asleep, $6 pleased, $7 watching
   {
     printf '#!/usr/bin/env bash\n'
     printf '# animated claude code statusline, written by cute-claude.\n'
@@ -671,193 +640,73 @@ write_statusline() { # $1 path, $2 face, $3 blink, $4 weary, $5 asleep, $6 pleas
     printf "weary='%s'\n" "$4"
     printf "asleep='%s'\n" "$5"
     printf "pleased='%s'\n" "$6"
+    printf "watching='%s'\n" "$7"
     cat <<'STATUSLINE_EOF'
-input=$(cat)
-
-# first string value for a key, so the statusline works without jq installed
-json_field() {
-  printf '%s' "$input" |
-    grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 |
-    sed 's/.*:[[:space:]]*"//; s/"$//'
-}
-
-# same, for a bare number rather than a quoted string
-json_num() {
-  printf '%s' "$input" |
-    grep -o "\"$1\"[[:space:]]*:[[:space:]]*[0-9][0-9.]*" | head -1 |
-    sed 's/.*:[[:space:]]*//'
-}
-
-if command -v jq >/dev/null 2>&1; then
-  dir=$(printf '%s' "$input" | jq -r '.workspace.current_dir // .cwd // empty')
-  ctx=$(printf '%s' "$input" | jq -r '.context_window.used_percentage // empty')
-else
-  dir=$(json_field current_dir)
-  [ -n "$dir" ] || dir=$(json_field cwd)
-  ctx=$(json_num used_percentage)
-fi
-ctx="${ctx%%.*}"   # integer part; empty on older Claude Code, which is handled below
-[ -n "$dir" ] || dir="$PWD"
-
-short="${dir/#$HOME/~}"; base="${short##*/}"; [ -z "$base" ] && base="~"
-
-# frame advances ~10x/sec off the clock; claude re-runs this script periodically,
-# so it animates as fast as the statusline refreshes (a gentle step, not 60fps).
-if [ -n "${STATUSLINE_FRAME:-}" ]; then f=$STATUSLINE_FRAME
-else f=$(( ($(date +%s%N) / 100000000) % 4 )); fi
-
-tw=("⋆" "✧" "✦" "✧")   # twinkle shimmer (constellation-coded)
-
-# The buddy paces: it drifts right, pauses to blink at the far end, drifts back.
-# Leading and trailing padding always sum to PACE_MAX, so the total width never
-# changes and nothing downstream of it jitters.
-pace=(0 1 2 1)
-PACE_MAX=2
-lead=${pace[$f]}
-printf -v pad_l '%*s' "$lead" ''
-printf -v pad_r '%*s' "$(( PACE_MAX - lead ))" ''
-
-buddy="${pad_l}${faces[$f]}${pad_r}"; sparkle="${tw[$f]}"
-
-# palette: the critter's own colours, plus the context readout's level colours
-pink=$'\e[38;2;249;168;212m'    # buddy
-lav=$'\e[38;2;196;181;253m'     # directory
-bright=$'\e[38;2;236;72;153m'   # sparkle + heart
-dim=$'\e[38;2;74;68;88m'        # separators
-rst=$'\e[0m'
-
-# The buddy wears the context window on its face. Past 90% it stops pacing and
-# its eyes give out — same width, so the line still does not move.
-# The critter naps when you go away. A hook touches this file on every prompt
-# and every turn end; if it has not been touched in a while, nobody is home.
-# Sleeping takes precedence over the context face — you are not there to read it.
-now=$(date +%s)
-idle_secs=0
-awake_file="$HOME/.claude/.critter-awake"
-if [ -f "$awake_file" ]; then
-  mtime=$(stat -c %Y "$awake_file" 2>/dev/null || stat -f %m "$awake_file" 2>/dev/null || printf '%s' "$now")
-  case "$mtime" in ''|*[!0-9]*) mtime="$now" ;; esac
-  idle_secs=$(( now - mtime ))
-fi
-# /pet touches this file, so the buddy looks pleased for a minute afterwards.
-petted=0
-pet_file="$HOME/.claude/.critter-petted"
-if [ -f "$pet_file" ]; then
-  pmtime=$(stat -c %Y "$pet_file" 2>/dev/null || stat -f %m "$pet_file" 2>/dev/null || printf 0)
-  case "$pmtime" in ''|*[!0-9]*) pmtime=0 ;; esac
-  if [ "$(( now - pmtime ))" -lt 60 ]; then
-    petted=1
-    printf -v pad_m '%*s' 1 ''
-    buddy="${pad_m}${pleased}${pad_m}"
-    sparkle="♡"
-  fi
-fi
-
-napping=0
-if [ "$idle_secs" -ge 600 ] 2>/dev/null && [ "$petted" -eq 0 ]; then
-  napping=1
-  printf -v pad_m '%*s' 1 ''
-  buddy="${pad_m}${asleep}${pad_m}"
-  sparkle="z"
-fi
-
-ctx_out=""
-if [ -n "$ctx" ]; then
-  if [ "$ctx" -ge 90 ] 2>/dev/null && [ "$napping" -eq 0 ] && [ "$petted" -eq 0 ]; then
-    printf -v pad_m '%*s' 1 ''
-    buddy="${pad_m}${weary}${pad_m}"
-    ctx_col=$'\e[38;2;248;113;113m'      # red
-  elif [ "$ctx" -ge 75 ] 2>/dev/null; then
-    ctx_col=$'\e[38;2;252;211;77m'       # amber
-  else
-    ctx_col=$'\e[38;2;134;239;172m'      # green
-  fi
-  ctx_out=" ${dim}·${rst} ${ctx_col}${ctx}%${rst}"
-fi
-
-printf '%s' "${pink}${buddy}${rst} ${lav}${base}${rst}${ctx_out} ${bright}${sparkle}♡${rst}"
+# @inline src/assets/statusline.sh
 STATUSLINE_EOF
   } > "$1"
   chmod +x "$1"
 }
 
-# Merge our keys into settings.json, preserving everything else.
-# python3 first: more machines have it than jq, and preferring it keeps the
-# common path the well-exercised one. jq second, then a last-resort writer that
-# only fires when there is genuinely nothing to preserve.
-merge_settings() {
-  local s="$1" cmd="$2" verbs="$3" hook="$4"
-
-  if command -v python3 >/dev/null 2>&1; then
-    [ -f "$s" ] || echo '{}' > "$s"
-    if ! python3 - "$s" "$cmd" "$verbs" "$hook" <<'PY'
-import json, sys
-path, cmd, verbs = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
-hook = sys.argv[4] if len(sys.argv) > 4 else ""
-with open(path) as fh:
-    text = fh.read().strip()
-settings = json.loads(text) if text else {}
-settings["statusLine"] = {"type": "command", "command": cmd, "refreshInterval": 1}
-settings["spinnerVerbs"] = {"mode": "replace", "verbs": verbs}
-if not settings.get("theme"):
-    settings["theme"] = "custom:kitten"
-if hook:
-    hooks = settings.get("hooks") or {}
-    for event in ("UserPromptSubmit", "Stop"):
-        entries = [e for e in (hooks.get(event) or [])
-                   if hook not in [h.get("command") for h in (e.get("hooks") or [])]]
-        entries.append({"hooks": [{"type": "command", "command": hook}]})
-        hooks[event] = entries
-    settings["hooks"] = hooks
-with open(path, "w") as fh:
-    json.dump(settings, fh, indent=2, ensure_ascii=False)
-    fh.write("\n")
-PY
-    then
-      echo "  ! python3 could not read $s (malformed?) — left it alone" >&2
-      return 0
-    fi
-    echo "  - merged statusLine, spinnerVerbs and the idle hook into settings.json"
-    return 0
-  fi
-
-  if command -v jq >/dev/null 2>&1; then
-    [ -f "$s" ] || echo '{}' > "$s"
-    jq --arg cmd "$cmd" --argjson verbs "$verbs" --arg hook "$hook" \
-       '.statusLine = {type:"command", command:$cmd, refreshInterval:1}
-        | .spinnerVerbs = {mode:"replace", verbs:$verbs}
-        | (if (.theme // "") == "" then .theme = "custom:kitten" else . end)
-        | .hooks = ((.hooks // {}) | reduce ("UserPromptSubmit","Stop") as $e (.;
-            .[$e] = (((.[$e] // []) | map(select([.hooks[]?.command] | index($hook) | not)))
-                     + [{hooks:[{type:"command", command:$hook}]}])))' \
-       "$s" 2>/dev/null > "$s.tmp" && mv "$s.tmp" "$s" || {
-      rm -f "$s.tmp"
-      echo "  ! jq could not read $s (malformed?) — left it alone" >&2
-      return 0
-    }
-    echo "  - merged statusLine, spinnerVerbs and the idle hook into settings.json"
-    return 0
-  fi
-
-  # No JSON tool at all: only safe to write when there is nothing worth keeping.
-  if [ -s "$s" ] && [ "$(tr -d '[:space:]' < "$s")" != "{}" ]; then
-    echo "  - no python3 or jq: left settings.json alone" >&2
-    echo "    add by hand: statusLine.command = \"$cmd\", spinnerVerbs, theme," >&2
-    echo "    and a UserPromptSubmit + Stop hook running: $hook" >&2
-    return 0
-  fi
+write_heartbeat() { # $1 path, $2 interval, $3 critter (already sanitised)
   {
-    printf '{\n'
-    printf '  "statusLine": { "type": "command", "command": "%s", "refreshInterval": 1 },\n' "$cmd"
-    printf '  "spinnerVerbs": { "mode": "replace", "verbs": %s },\n' "$verbs"
-    printf '  "hooks": {\n'
-    printf '    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "%s" } ] } ],\n' "$hook"
-    printf '    "Stop": [ { "hooks": [ { "type": "command", "command": "%s" } ] } ]\n' "$hook"
-    printf '  },\n'
-    printf '  "theme": "custom:kitten"\n'
-    printf '}\n'
-  } > "$s"
-  echo "  - wrote a fresh settings.json (no python3/jq, nothing to preserve)"
+    printf '#!/usr/bin/env bash\n'
+    printf '# critter heartbeat, written by cute-claude.\n'
+    printf '# edit freely - a reinstall will keep your changes in a .local copy.\n\n'
+    printf 'interval=%s\n' "$2"
+    printf 'critter=%s\n' "$3"
+    cat <<'HEARTBEAT_EOF'
+# @inline src/assets/heartbeat.sh
+HEARTBEAT_EOF
+  } > "$1"
+  chmod +x "$1"
+}
+
+# Merge our keys into settings.json, preserving everything else.
+#
+# jq is the only JSON tool this script uses, and preflight_deps has already
+# established it is present — see the note there about why nothing here is
+# hand-rolled.
+#
+# $1 = settings.json. Everything else comes from the globals set above, because
+# the payload varies with which knobs are on and threading eight positional
+# arguments through was worse than reading them here.
+#
+# Our hook entries are recognised by "critter" appearing in the command, so a
+# reinstall replaces them and a revert removes them, while hooks the user added
+# themselves are never touched.
+merge_settings() {
+  local s="$1"
+  local timeout=$(( AFK_INTERVAL + 60 ))
+  local what="the afk heartbeat hook"
+  [ "$DO_TERMINAL" -eq 1 ] && what="statusLine, spinnerVerbs and the hooks"
+
+  [ -f "$s" ] || echo '{}' > "$s"
+  jq --arg cmd "$STATUSLINE_CMD" --argjson verbs "$VERBS" \
+     --arg prompt "$PROMPT_HOOK" --arg awake "$AWAKE_HOOK" --arg beat "$HEARTBEAT_HOOK" \
+     --argjson timeout "$timeout" \
+     --argjson terminal "$DO_TERMINAL" \
+     '(if $terminal == 1 then
+           .statusLine = {type:"command", command:$cmd, refreshInterval:1}
+         | .spinnerVerbs = {mode:"replace", verbs:$verbs}
+         | (if (.theme // "") == "" then .theme = "custom:kitten" else . end)
+       else . end)
+      | ([{hooks:[{type:"command", command:$prompt}]}]) as $submit
+      | (( if $terminal == 1 then [{hooks:[{type:"command", command:$awake}]}] else [] end)
+         + [{hooks:[{type:"command", command:$beat, timeout:$timeout}]}]) as $stop
+      | .hooks = ((.hooks // {})
+          | .UserPromptSubmit = (((.UserPromptSubmit // [])
+              | map(select([.hooks[]?.command | test("critter")] | any | not))) + $submit)
+          | .Stop = (((.Stop // [])
+              | map(select([.hooks[]?.command | test("critter")] | any | not))) + $stop)
+          | with_entries(select(.value | length > 0)))
+      | (if (.hooks | length) == 0 then del(.hooks) else . end)' \
+     "$s" 2>/dev/null > "$s.tmp" && mv "$s.tmp" "$s" || {
+    rm -f "$s.tmp"
+    echo "  ! jq could not read $s (malformed?) — left it alone" >&2
+    return 0
+  }
+  echo "  - merged $what into settings.json"
 }
 
 write_commands() {
@@ -879,8 +728,8 @@ PET
   cat <<TREAT > "$d/treat.md"
 ---
 name: treat
-description: give the $CRITTER
-disable-model-invocation: true a treat
+description: give the $CRITTER a treat
+disable-model-invocation: true
 ---
 I have given you a treat. React in character as a $CRITTER receiving it —
 brief, delighted, a little undignified. Then go back to whatever we were doing
@@ -890,14 +739,36 @@ TREAT
   cat <<CRITTER > "$d/critter.md"
 ---
 name: critter
-description: how the $CRITTER
-disable-model-invocation: true is doing
+description: how the $CRITTER is doing
+disable-model-invocation: true
 ---
 Report on yourself as the $CRITTER, in character and in five lines or fewer:
 what we have actually worked on this session, how it is going, and your current
 mood about it. Be honest rather than reassuring — if this session has been a
 slog, say so. No task list, no offers of help, no next steps.
 CRITTER
+}
+
+# Installed separately from the three above: /afk is the only command that needs
+# the heartbeat hook behind it, so it ships with --afk rather than --commands.
+write_afk_command() { # $1 dir, $2 interval
+  local mins=$(( $2 / 60 ))
+  cat <<AFK > "$1/afk.md"
+---
+name: afk
+description: step away; the $CRITTER minds the session
+disable-model-invocation: true
+---
+!\`touch "$HOME/.claude/.critter-afk"\`
+
+I am stepping away from the keyboard. From now until I type something again,
+you will be woken every $mins minutes to say one idle line — that is what keeps
+this session from going cold, so treat each one as the whole job.
+
+Right now, say one short line in character as a $CRITTER settling in to wait.
+No work, no questions, no summary of what we were doing, no offering to keep
+going while I am gone.
+AFK
 }
 
 if [ "$DO_COMMANDS" -eq 1 ]; then
@@ -915,6 +786,8 @@ if [ "$DO_COMMANDS" -eq 1 ]; then
   done
 fi
 
+STATUSLINE_CMD="bash $HOME/.claude/statusline.sh"
+
 if [ "$DO_TERMINAL" -eq 1 ]; then
   echo
   echo "• --terminal: installing theme + statusline (TERMINAL-ONLY — inert in the VS Code panel)"
@@ -928,14 +801,37 @@ if [ "$DO_TERMINAL" -eq 1 ]; then
 
   claim "$HOME/.claude/statusline.sh"
   guard_edits "$HOME/.claude/statusline.sh"
-  write_statusline "$HOME/.claude/statusline.sh" "$FACE" "$BLINK" "$WEARY" "$SLEEP" "$HAPPY"
+  write_statusline "$HOME/.claude/statusline.sh" \
+    "$FACE" "$BLINK" "$WEARY" "$SLEEP" "$HAPPY" "$WATCH"
   manifest_set_sum "$HOME/.claude/statusline.sh" "$(file_sum "$HOME/.claude/statusline.sh")"
   echo "  - statusline installed  $FACE"
-
-  claim "$HOME/.claude/settings.json" settings
-  merge_settings "$HOME/.claude/settings.json" "bash $HOME/.claude/statusline.sh" "$VERBS" "$AWAKE_HOOK"
   echo "  - spinner verbs set to $CRITTER flavor"
 fi
+
+echo
+echo "• installing the afk heartbeat (nothing runs until you type /afk)"
+
+# The critter name reaches the hook inside a JSON string, and --critter takes
+# anything at all, so strip whatever would need escaping.
+CRITTER_SAFE="$(printf '%s' "$CRITTER" | tr -cd '[:alnum:] _-')"
+[ -n "$CRITTER_SAFE" ] || CRITTER_SAFE="critter"
+
+claim "$HOME/.claude/critter-heartbeat.sh"
+guard_edits "$HOME/.claude/critter-heartbeat.sh"
+write_heartbeat "$HOME/.claude/critter-heartbeat.sh" "$AFK_INTERVAL" "$CRITTER_SAFE"
+manifest_set_sum "$HOME/.claude/critter-heartbeat.sh" "$(file_sum "$HOME/.claude/critter-heartbeat.sh")"
+echo "  - heartbeat every $(( AFK_INTERVAL / 60 )) min while armed"
+
+mkdir -p "$HOME/.claude/commands"
+claim "$HOME/.claude/commands/afk.md"
+guard_edits "$HOME/.claude/commands/afk.md"
+write_afk_command "$HOME/.claude/commands" "$AFK_INTERVAL"
+manifest_set_sum "$HOME/.claude/commands/afk.md" "$(file_sum "$HOME/.claude/commands/afk.md")"
+echo "  - /afk"
+
+echo
+claim "$HOME/.claude/settings.json" settings
+merge_settings "$HOME/.claude/settings.json"
 
 echo
 printf '   ⋆ ˚ ｡ ⋆  %s  ⋆ ｡ ˚ ⋆\n' "$FACE"
