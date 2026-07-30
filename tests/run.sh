@@ -28,8 +28,12 @@ revert()  { HOME="$SANDBOX" bash "$INSTALLER" --revert >/dev/null 2>&1; }
 S() { printf '%s/.claude/settings.json' "$SANDBOX"; }
 q() { jq -r "$1" "$(S)" 2>/dev/null; }
 
+# The marker /pet writes. Deliberately outside ~/.claude — see PET_FILE in the
+# installer — so the tests have to look for it where it really lives.
+PET="/tmp/cute-claude-petted-$(id -u 2>/dev/null || echo 0)"
+
 REAL_HOME="$HOME"
-trap 'HOME="$REAL_HOME"' EXIT
+trap 'HOME="$REAL_HOME"; rm -f "$PET"' EXIT
 
 command -v jq >/dev/null 2>&1 || { echo "these tests need jq" >&2; exit 1; }
 
@@ -175,10 +179,25 @@ is "afk keeps the line width" "$(width)" "$base_width"
 sleep 1; touch "$HOME/.claude/.critter-prompt"
 is "back to awake once you type" "$(GRACE=0 render | grep -c 'ฅ\^•ﻌ•\^ฅ')" "1"
 
-touch "$HOME/.claude/.critter-petted"
+touch "$PET"
 is "petted outranks afk"      "$(render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "1"
 is "petted keeps the width"   "$(width)" "$base_width"
-rm -f "$HOME/.claude/.critter-petted"
+rm -f "$PET"
+cleanup
+
+echo
+echo "/pet writes outside ~/.claude"
+# Regression test. A slash command's !\`...\` line is permission-checked, and
+# Claude Code refuses writes anywhere under ~/.claude as sensitive files, so a
+# marker there makes /pet fail outright for every user.
+sandbox
+install --commands --terminal
+is "marker path is not under ~/.claude" \
+   "$(grep -c '\.claude' "$HOME/.claude/commands/pet.md")" "0"
+is "marker path is the shared /tmp one" \
+   "$(grep -cF "touch \"$PET\"" "$HOME/.claude/commands/pet.md")" "1"
+is "statusline looks for the same path" \
+   "$(grep -cF "pet_file='$PET'" "$HOME/.claude/statusline.sh")" "1"
 cleanup
 
 echo

@@ -135,6 +135,20 @@ fi
 
 MANIFEST="$HOME/.claude/.cute-claude-manifest"
 
+# Where /pet leaves its marker for the statusline to notice.
+#
+# NOT under ~/.claude, deliberately. A slash command's !`...` line is
+# permission-checked, and Claude Code treats everything in ~/.claude as a
+# sensitive file — so a marker there is refused outright:
+#
+#   Error: Shell command permission check failed ... which is a sensitive file.
+#
+# It is ephemeral UI state rather than config, so /tmp is where it belongs. The
+# path is resolved once here and baked into both the command and the statusline,
+# because $TMPDIR is not guaranteed to be the same in both shells. Losing the
+# file to a reboot costs nothing: the face simply does not show.
+PET_FILE="/tmp/cute-claude-petted-$(id -u 2>/dev/null || echo 0)"
+
 stamp() { date +%Y%m%d-%H%M%S; }
 
 # jq is the one thing here that is not bash or coreutils, and it is required
@@ -336,7 +350,8 @@ do_revert() {
     esac
   done < "$MANIFEST"
 
-  rm -f "$HOME/.claude/.critter-awake" "$HOME/.claude/.critter-petted" \
+  rm -f "$PET_FILE" \
+        "$HOME/.claude/.critter-awake" "$HOME/.claude/.critter-petted" \
         "$HOME/.claude/.critter-afk" "$HOME/.claude/.critter-prompt" || true
   rmdir "$HOME/.claude/themes" 2>/dev/null || true
   rmdir "$HOME/.claude/commands" 2>/dev/null || true
@@ -641,6 +656,9 @@ write_statusline() { # $1 path, $2 face, $3 blink, $4 weary, $5 asleep, $6 pleas
     printf "asleep='%s'\n" "$5"
     printf "pleased='%s'\n" "$6"
     printf "watching='%s'\n" "$7"
+    # Read from the global rather than threaded through as an argument: it must
+    # be byte-identical to the path baked into /pet, so there is one source.
+    printf "pet_file='%s'\n" "$PET_FILE"
     cat <<'STATUSLINE_EOF'
 # @inline src/assets/statusline.sh
 STATUSLINE_EOF
@@ -718,7 +736,7 @@ name: pet
 description: pet the $CRITTER
 disable-model-invocation: true
 ---
-!\`touch "$HOME/.claude/.critter-petted"\`
+!\`touch "$PET_FILE"\`
 
 I am petting you. Respond with nothing but contented $CRITTER noises and one
 kaomoji you make up on the spot. No work, no questions, no offering to help,

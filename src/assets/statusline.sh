@@ -14,6 +14,7 @@ weary='ฅ^×ﻌ×^ฅ'
 asleep='ฅ^-ﻌ-^ฅ'
 pleased='ฅ^ᵕﻌᵕ^ฅ'
 watching='ฅ^°ﻌ°^ฅ'
+pet_file="/tmp/cute-claude-petted-$(id -u 2>/dev/null || echo 0)"
 # @build:strip-end
 input=$(cat)
 
@@ -83,8 +84,9 @@ if [ -f "$awake_file" ]; then
   idle_secs=$(( now - mtime ))
 fi
 # /pet touches this file, so the buddy looks pleased for a minute afterwards.
+# The path is baked in above by the installer — it lives in /tmp rather than
+# ~/.claude because a slash command is not permitted to write there.
 petted=0
-pet_file="$HOME/.claude/.critter-petted"
 if [ -f "$pet_file" ]; then
   pmtime=$(stat -c %Y "$pet_file" 2>/dev/null || stat -f %m "$pet_file" 2>/dev/null || printf 0)
   case "$pmtime" in ''|*[!0-9]*) pmtime=0 ;; esac
