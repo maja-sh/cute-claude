@@ -40,9 +40,6 @@ Options:
   --commands             Also install /pet, /treat and /critter as slash
                          commands. Works everywhere, including the VS Code
                          panel. Off by default, and never on for --profile work.
-  --afk-interval <secs>  How long the critter waits between idle lines while
-                         /afk is armed. Default 2700 (45 min), which is under
-                         the one-hour prompt cache lifetime with room to spare.
   --list                 Show the built-in critters and exit.
   --revert               Undo everything and restore what was there before.
   -h, --help             This text.
@@ -59,13 +56,10 @@ Examples:
 The knobs are independent: --critter is the animal, --vibe is the warmth, and
 --vibe-extra is whatever else you want said about it. Any combination is valid.
 
-CLAUDE.md works everywhere, including the VS Code panel.
+CLAUDE.md works everywhere, including the VS Code panel and Zed's ACP adapter.
 
-/afk is always installed. Typing it tells the critter you have stepped away, and
-it then takes a short turn every --afk-interval seconds so the session's prompt
-cache stays alive instead of expiring after an hour. Each of those turns costs
-one cached read, so nothing happens until you ask for it, and the next thing you
-type calls the critter off.
+This installs no hooks. Without --terminal it writes CLAUDE.md and nothing else,
+so settings.json is never opened and jq is never needed.
 
 Every file this touches is backed up first and recorded in
 ~/.claude/.cute-claude-manifest, so --revert puts your environment back exactly
@@ -80,7 +74,6 @@ VIBE_EXTRA=""
 PROFILE=""
 DO_TERMINAL=0
 DO_COMMANDS=0
-AFK_INTERVAL=2700
 DO_REVERT=0
 DO_LIST=0
 
@@ -92,7 +85,6 @@ while [ $# -gt 0 ]; do
     --vibe-extra) VIBE_EXTRA="${2:-}"; shift 2 ;;
     --terminal) DO_TERMINAL=1; shift ;;
     --commands) DO_COMMANDS=1; shift ;;
-    --afk-interval) AFK_INTERVAL="${2:-2700}"; shift 2 ;;
     --list) DO_LIST=1; shift ;;
     --revert|--uninstall) DO_REVERT=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -121,19 +113,8 @@ case "$VIBE" in
   *) echo "unknown vibe: $VIBE (expected 'cute' or 'dry')" >&2; exit 1 ;;
 esac
 
-# A non-numeric interval would land in the generated hook and fail at runtime,
-# well after the install looked like it worked. Reject it here instead.
-case "$AFK_INTERVAL" in
-  ''|*[!0-9]*) echo "--afk-interval must be a whole number of seconds" >&2; exit 1 ;;
-esac
-if [ "$AFK_INTERVAL" -lt 60 ] || [ "$AFK_INTERVAL" -gt 3300 ]; then
-  echo "--afk-interval must be between 60 and 3300 seconds." >&2
-  echo "  the prompt cache expires after an hour, so a beat past ~55 minutes" >&2
-  echo "  arrives too late to keep anything warm." >&2
-  exit 1
-fi
-
 MANIFEST="$HOME/.claude/.cute-claude-manifest"
+SETTINGS="$HOME/.claude/settings.json"
 
 # Where /pet leaves its marker for the statusline to notice.
 #
@@ -151,15 +132,32 @@ PET_FILE="/tmp/cute-claude-petted-$(id -u 2>/dev/null || echo 0)"
 
 stamp() { date +%Y%m%d-%H%M%S; }
 
-# jq is the one thing here that is not bash or coreutils, and it is required
-# rather than optional on purpose.
+# Does this run need to open settings.json at all?
 #
-# Installing means merging into a settings.json we did not write and may not
-# have seen: nested hook arrays, unicode, whatever a person has accumulated. A
-# hand-rolled merge would be one regex away from eating that file, and this
-# installer's whole promise is that --revert puts it back exactly. So: one real
-# JSON tool, checked up front, so a missing dependency is a clear message rather
-# than a half-finished install.
+# Two reasons it might. --terminal writes statusLine, spinnerVerbs and the theme
+# there. And an install from before hooks were dropped left Stop and
+# UserPromptSubmit entries pointing at a heartbeat script this version no longer
+# writes, which have to be cleared out or they fire on every turn and fail.
+#
+# The grep is a cheap detector rather than a precise one: every hook we ever
+# wrote has "critter" in its command, and a false positive costs one no-op jq
+# pass. Nothing is parsed here, so it needs no jq of its own.
+needs_settings() {
+  [ "$DO_TERMINAL" -eq 1 ] && return 0
+  [ -f "$SETTINGS" ] && grep -q critter "$SETTINGS" 2>/dev/null && return 0
+  return 1
+}
+
+# jq is the one thing here that is not bash or coreutils, so it is required only
+# when settings.json is genuinely in play — see needs_settings above. A plain
+# install writes CLAUDE.md and nothing else and never calls this.
+#
+# When it IS needed, it is needed properly: merging into a settings.json we did
+# not write and may not have seen — nested hook arrays, unicode, whatever a
+# person has accumulated. A hand-rolled merge would be one regex away from eating
+# that file, and this installer's whole promise is that --revert puts it back
+# exactly. So: one real JSON tool, checked up front, so a missing dependency is a
+# clear message rather than a half-finished install.
 preflight_deps() {
   command -v jq >/dev/null 2>&1 && return 0
   echo "this needs jq, and it is not on your PATH." >&2
@@ -350,6 +348,8 @@ do_revert() {
     esac
   done < "$MANIFEST"
 
+  # Runtime markers, not installed files, so they are cleaned up rather than
+  # restored. The ~/.claude ones are from versions that still used hooks.
   rm -f "$PET_FILE" \
         "$HOME/.claude/.critter-awake" "$HOME/.claude/.critter-petted" \
         "$HOME/.claude/.critter-afk" "$HOME/.claude/.critter-prompt" || true
@@ -395,7 +395,11 @@ do_list() {
 }
 
 if [ "$DO_REVERT" -eq 1 ]; then
-  preflight_deps
+  # Only the settings entry needs jq to undo; a CLAUDE.md-only install reverts
+  # with nothing but cp and rm, so do not demand a dependency it never used.
+  if [ -f "$MANIFEST" ] && cut -f1 "$MANIFEST" | grep -qx settings; then
+    preflight_deps
+  fi
   do_revert
   exit 0
 fi
@@ -407,7 +411,9 @@ fi
 
 # ----------------------------------------------------------------- install --
 
-preflight_deps
+# Checked before anything is written, so a missing jq costs nothing — but only
+# asked for when settings.json is actually going to be opened.
+needs_settings && preflight_deps
 
 # A stable pseudo-random index derived from a string, so an invented critter
 # gets the same face every time rather than a different one per machine.
@@ -435,14 +441,6 @@ FACE_POOL=(
 
 # @inline src/critters.sh
 
-# Every hook we install has "critter" in its command, which is how revert finds
-# our entries again without disturbing hooks the user added later.
-#   Stop             — the turn ended; the critter is idle but you are still here
-#   UserPromptSubmit — you typed something, so you are demonstrably back
-AWAKE_HOOK="touch $HOME/.claude/.critter-awake"
-PROMPT_HOOK="touch $HOME/.claude/.critter-awake $HOME/.claude/.critter-prompt"
-HEARTBEAT_HOOK="bash $HOME/.claude/critter-heartbeat.sh"
-
 # The strained face shown when the context window is nearly full. Eyes become ×,
 # which works for every built-in and every pooled face since they all use •.
 WEARY="${FACE//•/×}"
@@ -450,8 +448,6 @@ if [ "$CRITTER" = "bnuuy" ]; then WEARY='/(×_×)\'; fi
 HAPPY="${FACE//•/ᵕ}"
 SLEEP="${FACE//•/-}"
 if [ "$CRITTER" = "bnuuy" ]; then SLEEP='/(-_-)\'; fi
-# Watching the door while you are away — awake, just not busy.
-WATCH="${FACE//•/°}"
 
 # the dry vibe drops headpats from the tone, so drop them from the critter blurb too
 if [ "$VIBE" = "dry" ]; then
@@ -567,7 +563,7 @@ RULES
 manifest_set_sum "$TARGET" "$(file_sum "$TARGET")"
 
 echo "• installed $TARGET  (critter: $CRITTER $EMOJI)"
-echo "  ^ this works EVERYWHERE, including the VS Code panel. restart Claude Code to load it."
+echo "  ^ this works EVERYWHERE — terminal, VS Code panel, Zed. restart Claude Code to load it."
 
 write_theme() {
   # Colors come from the T_* vars set by the critter case block. The JSON below
@@ -644,7 +640,7 @@ write_theme() {
 THEME_EOF
 }
 
-write_statusline() { # $1 path, $2 face, $3 blink, $4 weary, $5 asleep, $6 pleased, $7 watching
+write_statusline() { # $1 path, $2 face, $3 blink, $4 weary, $5 asleep, $6 pleased
   {
     printf '#!/usr/bin/env bash\n'
     printf '# animated claude code statusline, written by cute-claude.\n'
@@ -655,27 +651,12 @@ write_statusline() { # $1 path, $2 face, $3 blink, $4 weary, $5 asleep, $6 pleas
     printf "weary='%s'\n" "$4"
     printf "asleep='%s'\n" "$5"
     printf "pleased='%s'\n" "$6"
-    printf "watching='%s'\n" "$7"
     # Read from the global rather than threaded through as an argument: it must
     # be byte-identical to the path baked into /pet, so there is one source.
     printf "pet_file='%s'\n" "$PET_FILE"
     cat <<'STATUSLINE_EOF'
 # @inline src/assets/statusline.sh
 STATUSLINE_EOF
-  } > "$1"
-  chmod +x "$1"
-}
-
-write_heartbeat() { # $1 path, $2 interval, $3 critter (already sanitised)
-  {
-    printf '#!/usr/bin/env bash\n'
-    printf '# critter heartbeat, written by cute-claude.\n'
-    printf '# edit freely - a reinstall will keep your changes in a .local copy.\n\n'
-    printf 'interval=%s\n' "$2"
-    printf 'critter=%s\n' "$3"
-    cat <<'HEARTBEAT_EOF'
-# @inline src/assets/heartbeat.sh
-HEARTBEAT_EOF
   } > "$1"
   chmod +x "$1"
 }
@@ -694,37 +675,43 @@ HEARTBEAT_EOF
 # reinstall replaces them and a revert removes them, while hooks the user added
 # themselves are never touched.
 merge_settings() {
-  local s="$1"
-  local timeout=$(( AFK_INTERVAL + 60 ))
-  local what="the afk heartbeat hook"
-  [ "$DO_TERMINAL" -eq 1 ] && what="statusLine, spinnerVerbs and the hooks"
+  local s="$1" had_hooks=0 what
 
   [ -f "$s" ] || echo '{}' > "$s"
+  grep -q critter "$s" 2>/dev/null && had_hooks=1
+
   jq --arg cmd "$STATUSLINE_CMD" --argjson verbs "$VERBS" \
-     --arg prompt "$PROMPT_HOOK" --arg awake "$AWAKE_HOOK" --arg beat "$HEARTBEAT_HOOK" \
-     --argjson timeout "$timeout" \
      --argjson terminal "$DO_TERMINAL" \
      '(if $terminal == 1 then
            .statusLine = {type:"command", command:$cmd, refreshInterval:1}
          | .spinnerVerbs = {mode:"replace", verbs:$verbs}
          | (if (.theme // "") == "" then .theme = "custom:kitten" else . end)
        else . end)
-      | ([{hooks:[{type:"command", command:$prompt}]}]) as $submit
-      | (( if $terminal == 1 then [{hooks:[{type:"command", command:$awake}]}] else [] end)
-         + [{hooks:[{type:"command", command:$beat, timeout:$timeout}]}]) as $stop
-      | .hooks = ((.hooks // {})
-          | .UserPromptSubmit = (((.UserPromptSubmit // [])
-              | map(select([.hooks[]?.command | test("critter")] | any | not))) + $submit)
-          | .Stop = (((.Stop // [])
-              | map(select([.hooks[]?.command | test("critter")] | any | not))) + $stop)
-          | with_entries(select(.value | length > 0)))
-      | (if (.hooks | length) == 0 then del(.hooks) else . end)' \
+      # This version installs no hooks. Versions that had /afk left Stop and
+      # UserPromptSubmit entries behind, and they would now invoke a heartbeat
+      # script that no longer exists, on every turn. Ours are the ones whose
+      # command mentions "critter"; anything the user added is untouched.
+      | (if has("hooks") then
+             .hooks = (.hooks
+               | with_entries(.value |= map(select(
+                   [.hooks[]?.command | test("critter")] | any | not)))
+               | with_entries(select(.value | length > 0)))
+           | (if (.hooks | length) == 0 then del(.hooks) else . end)
+         else . end)' \
      "$s" 2>/dev/null > "$s.tmp" && mv "$s.tmp" "$s" || {
     rm -f "$s.tmp"
     echo "  ! jq could not read $s (malformed?) — left it alone" >&2
     return 0
   }
+
+  if [ "$DO_TERMINAL" -eq 1 ]; then
+    what="statusLine, spinnerVerbs and the theme"
+  else
+    what="nothing new"
+  fi
   echo "  - merged $what into settings.json"
+  [ "$had_hooks" -eq 1 ] && echo "  - removed hooks left by an older install (/afk is gone)"
+  return 0
 }
 
 write_commands() {
@@ -767,28 +754,6 @@ slog, say so. No task list, no offers of help, no next steps.
 CRITTER
 }
 
-# Installed separately from the three above: /afk is the only command that needs
-# the heartbeat hook behind it, so it ships with --afk rather than --commands.
-write_afk_command() { # $1 dir, $2 interval
-  local mins=$(( $2 / 60 ))
-  cat <<AFK > "$1/afk.md"
----
-name: afk
-description: step away; the $CRITTER minds the session
-disable-model-invocation: true
----
-!\`touch "$HOME/.claude/.critter-afk"\`
-
-I am stepping away from the keyboard. From now until I type something again,
-you will be woken every $mins minutes to say one idle line — that is what keeps
-this session from going cold, so treat each one as the whole job.
-
-Right now, say one short line in character as a $CRITTER settling in to wait.
-No work, no questions, no summary of what we were doing, no offering to keep
-going while I am gone.
-AFK
-}
-
 if [ "$DO_COMMANDS" -eq 1 ]; then
   echo
   echo "• --commands: installing slash commands"
@@ -820,36 +785,19 @@ if [ "$DO_TERMINAL" -eq 1 ]; then
   claim "$HOME/.claude/statusline.sh"
   guard_edits "$HOME/.claude/statusline.sh"
   write_statusline "$HOME/.claude/statusline.sh" \
-    "$FACE" "$BLINK" "$WEARY" "$SLEEP" "$HAPPY" "$WATCH"
+    "$FACE" "$BLINK" "$WEARY" "$SLEEP" "$HAPPY"
   manifest_set_sum "$HOME/.claude/statusline.sh" "$(file_sum "$HOME/.claude/statusline.sh")"
   echo "  - statusline installed  $FACE"
   echo "  - spinner verbs set to $CRITTER flavor"
 fi
 
-echo
-echo "• installing the afk heartbeat (nothing runs until you type /afk)"
-
-# The critter name reaches the hook inside a JSON string, and --critter takes
-# anything at all, so strip whatever would need escaping.
-CRITTER_SAFE="$(printf '%s' "$CRITTER" | tr -cd '[:alnum:] _-')"
-[ -n "$CRITTER_SAFE" ] || CRITTER_SAFE="critter"
-
-claim "$HOME/.claude/critter-heartbeat.sh"
-guard_edits "$HOME/.claude/critter-heartbeat.sh"
-write_heartbeat "$HOME/.claude/critter-heartbeat.sh" "$AFK_INTERVAL" "$CRITTER_SAFE"
-manifest_set_sum "$HOME/.claude/critter-heartbeat.sh" "$(file_sum "$HOME/.claude/critter-heartbeat.sh")"
-echo "  - heartbeat every $(( AFK_INTERVAL / 60 )) min while armed"
-
-mkdir -p "$HOME/.claude/commands"
-claim "$HOME/.claude/commands/afk.md"
-guard_edits "$HOME/.claude/commands/afk.md"
-write_afk_command "$HOME/.claude/commands" "$AFK_INTERVAL"
-manifest_set_sum "$HOME/.claude/commands/afk.md" "$(file_sum "$HOME/.claude/commands/afk.md")"
-echo "  - /afk"
-
-echo
-claim "$HOME/.claude/settings.json" settings
-merge_settings "$HOME/.claude/settings.json"
+# settings.json is opened only when there is a reason to — see needs_settings.
+# A default install has none, and never touches it.
+if needs_settings; then
+  echo
+  claim "$SETTINGS" settings
+  merge_settings "$SETTINGS"
+fi
 
 echo
 printf '   ⋆ ˚ ｡ ⋆  %s  ⋆ ｡ ˚ ⋆\n' "$FACE"

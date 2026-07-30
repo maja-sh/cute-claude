@@ -13,7 +13,6 @@ faces=('ฅ^•ﻌ•^ฅ' 'ฅ^•ﻌ•^ฅ' 'ฅ^˘ﻌ˘^ฅ' 'ฅ^•ﻌ•^
 weary='ฅ^×ﻌ×^ฅ'
 asleep='ฅ^-ﻌ-^ฅ'
 pleased='ฅ^ᵕﻌᵕ^ฅ'
-watching='ฅ^°ﻌ°^ฅ'
 pet_file="/tmp/cute-claude-petted-$(id -u 2>/dev/null || echo 0)"
 # @build:strip-end
 input=$(cat)
@@ -72,14 +71,22 @@ rst=$'\e[0m'
 
 # The buddy wears the context window on its face. Past 90% it stops pacing and
 # its eyes give out — same width, so the line still does not move.
-# The critter naps when you go away. A hook touches this file on every prompt
-# and every turn end; if it has not been touched in a while, nobody is home.
+#
+# The critter naps when you go away. Idleness comes from the transcript's mtime:
+# Claude Code appends to it on every prompt and every turn, so "last written" is
+# "last activity" without this needing a hook to tell it. That matters because
+# hooks only fire in the terminal — reading the transcript works identically in
+# the VS Code panel and under Zed's ACP adapter.
 # Sleeping takes precedence over the context face — you are not there to read it.
 now=$(date +%s)
 idle_secs=0
-awake_file="$HOME/.claude/.critter-awake"
-if [ -f "$awake_file" ]; then
-  mtime=$(stat -c %Y "$awake_file" 2>/dev/null || stat -f %m "$awake_file" 2>/dev/null || printf '%s' "$now")
+if command -v jq >/dev/null 2>&1; then
+  transcript=$(printf '%s' "$input" | jq -r '.transcript_path // empty')
+else
+  transcript=$(json_field transcript_path)
+fi
+if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+  mtime=$(stat -c %Y "$transcript" 2>/dev/null || stat -f %m "$transcript" 2>/dev/null || printf '%s' "$now")
   case "$mtime" in ''|*[!0-9]*) mtime="$now" ;; esac
   idle_secs=$(( now - mtime ))
 fi
@@ -98,30 +105,8 @@ if [ -f "$pet_file" ]; then
   fi
 fi
 
-# /afk arms the heartbeat, so the critter is not asleep — it is waiting by the
-# door, taking a turn every so often to keep the session warm. A prompt you type
-# stamps .critter-prompt, and a stamp at least as new as the marker means you
-# are back, so the marker stops counting even before the hook clears it.
-afk=0
-afk_file="$HOME/.claude/.critter-afk"
-prompt_file="$HOME/.claude/.critter-prompt"
-if [ -f "$afk_file" ] && [ "$petted" -eq 0 ]; then
-  amt=$(stat -c %Y "$afk_file" 2>/dev/null || stat -f %m "$afk_file" 2>/dev/null || printf 0)
-  pmt=$(stat -c %Y "$prompt_file" 2>/dev/null || stat -f %m "$prompt_file" 2>/dev/null || printf 0)
-  case "$amt" in ''|*[!0-9]*) amt=0 ;; esac
-  case "$pmt" in ''|*[!0-9]*) pmt=0 ;; esac
-  # Same grace window as the heartbeat, for the same reason — see the armed()
-  # comment in critter-heartbeat.sh.
-  if [ "$(( now - amt ))" -lt "${CRITTER_AFK_GRACE:-15}" ] || [ "$amt" -ge "$pmt" ]; then
-    afk=1
-    printf -v pad_m '%*s' 1 ''
-    buddy="${pad_m}${watching}${pad_m}"
-    sparkle="⋆"
-  fi
-fi
-
 napping=0
-if [ "$idle_secs" -ge 600 ] 2>/dev/null && [ "$petted" -eq 0 ] && [ "$afk" -eq 0 ]; then
+if [ "$idle_secs" -ge 600 ] 2>/dev/null && [ "$petted" -eq 0 ]; then
   napping=1
   printf -v pad_m '%*s' 1 ''
   buddy="${pad_m}${asleep}${pad_m}"
@@ -130,7 +115,7 @@ fi
 
 ctx_out=""
 if [ -n "$ctx" ]; then
-  if [ "$ctx" -ge 90 ] 2>/dev/null && [ "$napping" -eq 0 ] && [ "$petted" -eq 0 ] && [ "$afk" -eq 0 ]; then
+  if [ "$ctx" -ge 90 ] 2>/dev/null && [ "$napping" -eq 0 ] && [ "$petted" -eq 0 ]; then
     printf -v pad_m '%*s' 1 ''
     buddy="${pad_m}${weary}${pad_m}"
     ctx_col=$'\e[38;2;248;113;113m'      # red

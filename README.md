@@ -4,6 +4,9 @@ Sets up a warm, critter-flavored Claude Code persona: a tone guide in
 `CLAUDE.md`, and optionally a theme, an animated statusline, critter-flavored
 spinner verbs, and a handful of slash commands.
 
+It installs **no hooks**. Without `--terminal` it writes `CLAUDE.md` and nothing
+else, so `settings.json` is never opened.
+
 Everything it writes lives under `~/.claude`, is backed up first, and is
 recorded in a manifest, so `--revert` puts your environment back exactly as it
 was — including un-merging only its own keys from a `settings.json` you already
@@ -23,26 +26,35 @@ curl -fsSL <url>/dist/cute.sh | bash -s -- --critter bnuuy --terminal
 
 Or clone and run `dist/cute.sh` directly. Restart Claude Code afterwards.
 
-Requires `bash`, coreutils and **`jq`**. jq is checked before anything is
-written, so a missing dependency costs you nothing but the message telling you
-to install it. It is required rather than optional because installing means
-merging into a `settings.json` this script did not write, and that is not a job
-for regexes — see the note above `preflight_deps` in `src/installer.sh`.
+Requires `bash` and coreutils. **`jq` is needed only when `settings.json` is
+actually opened** — that is, with `--terminal`, or when upgrading an install old
+enough to have left hooks behind. A plain install needs neither.
+
+Where it is needed it is required rather than optional, because merging into a
+`settings.json` this script did not write is not a job for regexes. It is checked
+before anything is written, so a missing dependency costs you nothing but the
+message telling you to install it — see the note above `preflight_deps` in
+`src/installer.sh`.
 
 ## What it writes
 
 | Path | What | Needs |
 |---|---|---|
 | `~/.claude/CLAUDE.md` | tone guide — the persona itself | always |
-| `~/.claude/critter-heartbeat.sh` | the `/afk` hook | always |
-| `~/.claude/commands/afk.md` | `/afk` | always |
-| `~/.claude/settings.json` | hooks, and with `--terminal` the statusline, spinner verbs and theme | always (merged, never replaced) |
+| `~/.claude/settings.json` | statusline, spinner verbs, theme | `--terminal` (merged, never replaced) |
 | `~/.claude/statusline.sh` | the animated statusline | `--terminal` |
 | `~/.claude/themes/kitten.json` | the color theme | `--terminal` |
 | `~/.claude/commands/{pet,treat,critter}.md` | `/pet`, `/treat`, `/critter` | `--commands` |
 
-`CLAUDE.md` and the slash commands work everywhere. The theme, statusline and
-spinner verbs are **terminal-only** — they do nothing in the VS Code panel.
+`CLAUDE.md` and the slash commands work everywhere — the terminal, the VS Code
+panel, and Zed's ACP adapter, all of which read `CLAUDE.md` directly. The theme,
+statusline and spinner verbs are **terminal-only**: they are Claude Code's own
+CLI chrome, and other frontends draw their own UI, so there is no surface for
+them to appear on.
+
+`/pet` leaves a marker in `/tmp` rather than `~/.claude`. A slash command's
+`` !`...` `` line is permission-checked and Claude Code refuses writes anywhere
+under `~/.claude` as sensitive, so a marker there fails outright.
 
 ## Options
 
@@ -54,7 +66,6 @@ spinner verbs are **terminal-only** — they do nothing in the VS Code panel.
 | `--profile <work\|personal>` | shorthand. `work` = `--vibe dry`; `personal` = cute + `--terminal --commands` |
 | `--terminal` | theme, statusline, spinner verbs |
 | `--commands` | `/pet`, `/treat`, `/critter` |
-| `--afk-interval <secs>` | seconds between idle lines. Default 2700 (45 min) |
 | `--list` | show the built-in critters |
 | `--revert` | undo everything |
 | `--version` | which build this is |
@@ -64,28 +75,6 @@ deterministically from its name, and `CLAUDE.md` asks Claude to invent that
 critter's noises and habits and keep them consistent. The flavor is generated at
 read time by the thing reading it.
 
-## `/afk`
-
-Type `/afk` when you step away. The critter then says one short idle line every
-45 minutes until you type something again.
-
-This is not only decorative. Claude's prompt cache expires an hour after last
-use, and **reading a cache entry refreshes its lifetime** — so a turn every 45
-minutes keeps an idle session warm indefinitely instead of letting it go cold
-while you are at lunch.
-
-The mechanism matters: the cache is keyed on the conversation prefix, not on a
-session id. Only a real turn *in that session* refreshes it. A background job
-talking to the API builds a different prefix and does nothing for the session
-you left open. So `/afk` arms a `Stop` hook that waits out the interval and then
-blocks the stop, which starts one more turn in the same conversation.
-
-Cost: each beat is one cached read of the conversation so far, plus a few output
-tokens. On a large session that is not nothing. Nothing is armed until you ask,
-and the next prompt you type disarms it.
-
-With `--terminal`, the statusline shows a distinct waiting face while armed.
-
 ## Reverting
 
 ```sh
@@ -93,7 +82,7 @@ dist/cute.sh --revert
 ```
 
 Files it created are deleted; files it replaced are restored from their backups;
-`settings.json` has only cute-claude's own keys and hooks removed, so anything
+`settings.json` has only cute-claude's own keys removed, so anything
 you changed since installing survives. If you edited a file it wrote, a reinstall
 keeps your version alongside as `<name>.local.<timestamp>` rather than
 discarding it.
@@ -105,7 +94,6 @@ build.sh                    src/ -> dist/cute.sh
 src/installer.sh            args, preflight, manifest, claim/revert, install flow
 src/critters.sh             the critter table — faces, spinner verbs, palettes
 src/assets/statusline.sh    the statusline program
-src/assets/heartbeat.sh     the /afk heartbeat hook
 dist/cute.sh                the built artifact — this is what you install
 tests/run.sh                the suite
 ```
@@ -128,7 +116,6 @@ which is what lets you run them directly while iterating:
 
 ```sh
 printf '{"workspace":{"current_dir":"/tmp"}}' | bash src/assets/statusline.sh
-printf '{}' | bash src/assets/heartbeat.sh
 ```
 
 The build is deterministic — same sources in, byte-identical file out. Do not
@@ -142,5 +129,5 @@ real `~/.claude`. It needs `jq` and nothing else.
 Add a case to `src/critters.sh` with a face pair (`FACE`/`BLINK` must be the
 same display width or the statusline jitters), spinner verbs, and a palette,
 then `./build.sh`. The five status faces are derived from `FACE` by substituting
-the eyes, so a face built from `•` gets weary, asleep, pleased and watching
-variants for free.
+the eyes, so a face built from `•` gets weary, asleep and pleased variants for
+free.

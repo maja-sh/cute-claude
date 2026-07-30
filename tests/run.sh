@@ -2,7 +2,7 @@
 # cute-claude test suite.
 #
 # Every case runs the installer against a throwaway HOME, so nothing here can
-# touch the real ~/.claude. Needs jq and nothing else, same as the installer.
+# touch the real ~/.claude. Needs jq and nothing else.
 #
 #   bash tests/run.sh
 set -uo pipefail
@@ -32,6 +32,14 @@ q() { jq -r "$1" "$(S)" 2>/dev/null; }
 # installer — so the tests have to look for it where it really lives.
 PET="/tmp/cute-claude-petted-$(id -u 2>/dev/null || echo 0)"
 
+# Backdate a file. GNU touch takes -d @epoch; BSD needs -t with a formatted
+# stamp, so try both rather than assuming which platform this is running on.
+age_file() { # $1 = path, $2 = seconds ago
+  local when=$(( $(date +%s) - $2 ))
+  touch -d "@$when" "$1" 2>/dev/null && return 0
+  touch -t "$(date -r "$when" +%Y%m%d%H%M.%S 2>/dev/null)" "$1" 2>/dev/null
+}
+
 REAL_HOME="$HOME"
 trap 'HOME="$REAL_HOME"; rm -f "$PET"' EXIT
 
@@ -47,142 +55,36 @@ echo "bare install"
 sandbox
 install
 has   "CLAUDE.md written"                "$HOME/.claude/CLAUDE.md"
-has   "heartbeat written"                "$HOME/.claude/critter-heartbeat.sh"
-has   "/afk written"                     "$HOME/.claude/commands/afk.md"
-has   "settings.json written"            "$(S)"
 hasnt "no statusline without --terminal" "$HOME/.claude/statusline.sh"
 hasnt "no /pet without --commands"       "$HOME/.claude/commands/pet.md"
-is    "heartbeat is a Stop hook" \
-      "$(q '.hooks.Stop[-1].hooks[0].command | split("/") | last')" "critter-heartbeat.sh"
-is    "heartbeat timeout outlasts the interval" \
-      "$(q '.hooks.Stop[-1].hooks[0].timeout')" "2760"
-is    "no statusLine key without --terminal" "$(q '.statusLine // "none"')" "none"
+# The whole point of dropping the hooks: a default install is one file.
+hasnt "settings.json left alone"         "$(S)"
+hasnt "no heartbeat any more"            "$HOME/.claude/critter-heartbeat.sh"
+hasnt "no /afk any more"                 "$HOME/.claude/commands/afk.md"
+has   "manifest written"                 "$HOME/.claude/.cute-claude-manifest"
 cleanup
 
 echo
 echo "full install"
 sandbox
 install --terminal --commands --critter bnuuy
-has  "statusline"          "$HOME/.claude/statusline.sh"
-has  "theme"               "$HOME/.claude/themes/kitten.json"
-has  "/pet"                "$HOME/.claude/commands/pet.md"
-has  "/afk still there"    "$HOME/.claude/commands/afk.md"
-is   "statusline knows the watching face" \
-     "$(grep -c '^watching=' "$HOME/.claude/statusline.sh")" "1"
-is   "settings.json is an object"  "$(q 'type')" "object"
-is   "theme set"                   "$(q '.theme')" "custom:kitten"
-is   "UserPromptSubmit stamps the prompt marker" \
-     "$(q '.hooks.UserPromptSubmit[0].hooks[0].command | test("critter-prompt")')" "true"
-is   "Stop has both awake and heartbeat" "$(q '.hooks.Stop | length')" "2"
+has  "statusline"                 "$HOME/.claude/statusline.sh"
+has  "theme"                      "$HOME/.claude/themes/kitten.json"
+has  "/pet"                       "$HOME/.claude/commands/pet.md"
+has  "settings.json written"      "$(S)"
+is   "settings.json is an object" "$(q 'type')" "object"
+is   "theme set"                  "$(q '.theme')" "custom:kitten"
+is   "statusLine points at our script" \
+     "$(q '.statusLine.command | split("/") | last')" "statusline.sh"
 is   "spinner verbs are bnuuy flavoured" \
      "$(q '.spinnerVerbs.verbs | map(select(. == "Binkying")) | length')" "1"
-for f in pet treat critter afk; do
+# No hooks, in any form, ever again.
+is   "installs no hooks"          "$(q '.hooks // "none"')" "none"
+for f in pet treat critter; do
   is "/$f frontmatter is well formed" \
      "$(awk 'NR>1 && /^---$/{exit} NR>1 && /^disable-model-invocation: true$/{n++} END{print n+0}' \
         "$HOME/.claude/commands/$f.md")" "1"
 done
-cleanup
-
-echo
-echo "reinstall is idempotent"
-sandbox
-install --terminal --commands
-first="$(cat "$(S)")"
-install --terminal --commands
-is "second run leaves settings identical" \
-   "$([ "$(cat "$(S)")" = "$first" ] && echo same || echo changed)" "same"
-is "hooks did not accumulate" "$(q '.hooks.Stop | length')" "2"
-cleanup
-
-echo
-echo "revert restores what was there"
-sandbox
-printf '{\n  "theme": "dark",\n  "mine": [1, 2],\n  "hooks": {\n    "Stop": [ { "hooks": [ { "type": "command", "command": "echo mine" } ] } ]\n  }\n}\n' \
-  > "$(S)"
-printf '# my own notes\n' > "$HOME/.claude/CLAUDE.md"
-before_md="$(cat "$HOME/.claude/CLAUDE.md")"
-before_settings="$(cat "$(S)")"
-install --terminal --commands
-is "install changed settings.json" \
-   "$([ "$(cat "$(S)")" = "$before_settings" ] && echo same || echo changed)" "changed"
-revert
-is    "CLAUDE.md restored"    "$(cat "$HOME/.claude/CLAUDE.md")" "$before_md"
-is    "user theme restored"   "$(q '.theme')" "dark"
-is    "unrelated key kept"    "$(jq -c '.mine' "$(S)" 2>/dev/null)" "[1,2]"
-is    "user hook survived"    "$(q '.hooks.Stop[0].hooks[0].command')" "echo mine"
-is    "our hooks all gone"    "$(q '.hooks.Stop | length')" "1"
-is    "our statusLine gone"   "$(q '.statusLine // "none"')" "none"
-is    "our spinnerVerbs gone" "$(q '.spinnerVerbs // "none"')" "none"
-hasnt "heartbeat removed"     "$HOME/.claude/critter-heartbeat.sh"
-hasnt "/afk removed"          "$HOME/.claude/commands/afk.md"
-hasnt "statusline removed"    "$HOME/.claude/statusline.sh"
-hasnt "manifest removed"      "$HOME/.claude/.cute-claude-manifest"
-cleanup
-
-echo
-echo "revert of a settings.json we created deletes it"
-sandbox
-install
-revert
-hasnt "settings.json removed" "$(S)"
-cleanup
-
-echo
-echo "heartbeat behaviour"
-sandbox
-install --afk-interval 60
-HB="$HOME/.claude/critter-heartbeat.sh"
-beat() { printf '{}' | HOME="$SANDBOX" CRITTER_AFK_GRACE="${GRACE:-15}" bash "$1"; }
-
-is "silent when never armed" "$(beat "$HB")" ""
-
-touch "$HOME/.claude/.critter-prompt"; sleep 1
-touch "$HOME/.claude/.critter-afk"; sleep 1
-touch "$HOME/.claude/.critter-prompt"          # you came back
-is    "silent once you are back"  "$(GRACE=0 beat "$HB")" ""
-hasnt "marker cleared on return"  "$HOME/.claude/.critter-afk"
-
-# Armed, with the sleep stubbed out so the suite does not take a minute.
-touch "$HOME/.claude/.critter-prompt"; sleep 1; touch "$HOME/.claude/.critter-afk"
-sed 's/^sleep "\$interval"$/:/' "$HB" > "$SANDBOX/hb-nosleep.sh"
-out="$(beat "$SANDBOX/hb-nosleep.sh")"
-is "blocks the stop when armed" \
-   "$(printf '%s' "$out" | jq -r '.decision' 2>/dev/null)" "block"
-is "reason names the critter" \
-   "$(printf '%s' "$out" | jq -r '.reason | test("cat")' 2>/dev/null)" "true"
-is "reason has no embedded newlines" "$(printf '%s' "$out" | wc -l | tr -d ' ')" "0"
-cleanup
-
-echo
-echo "statusline renders"
-sandbox
-install --terminal
-SL="$HOME/.claude/statusline.sh"
-payload='{"workspace":{"current_dir":"/tmp/proj"},"context_window":{"used_percentage":12}}'
-render() { printf '%s' "$payload" | STATUSLINE_FRAME=0 HOME="$SANDBOX" \
-             CRITTER_AFK_GRACE="${GRACE:-15}" bash "$SL" | sed 's/\x1b\[[0-9;]*m//g'; }
-# wc -m, not awk length: the faces differ in byte count but not in display
-# width, and it is display width that decides whether the line jitters.
-width()  { render | wc -m | tr -d ' '; }
-
-is "shows the directory"   "$(render | grep -c 'proj')" "1"
-is "awake face by default" "$(render | grep -c 'ฅ\^•ﻌ•\^ฅ')" "1"
-base_width="$(width)"
-
-touch "$HOME/.claude/.critter-prompt"; sleep 1; touch "$HOME/.claude/.critter-afk"
-is "afk face while armed"  "$(render | grep -c 'ฅ\^°ﻌ°\^ฅ')" "1"
-is "afk keeps the line width" "$(width)" "$base_width"
-
-# Past the grace window a prompt outranks the marker. The sleep is load-bearing:
-# a same-second tie deliberately still counts as armed, because at arming time
-# /afk and the prompt hook stamp within the same second.
-sleep 1; touch "$HOME/.claude/.critter-prompt"
-is "back to awake once you type" "$(GRACE=0 render | grep -c 'ฅ\^•ﻌ•\^ฅ')" "1"
-
-touch "$PET"
-is "petted outranks afk"      "$(render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "1"
-is "petted keeps the width"   "$(width)" "$base_width"
-rm -f "$PET"
 cleanup
 
 echo
@@ -201,23 +103,138 @@ is "statusline looks for the same path" \
 cleanup
 
 echo
+echo "upgrading from a version that had /afk"
+# Those installs left Stop and UserPromptSubmit hooks behind. This version does
+# not write them, so it has to actively clear them or they invoke a heartbeat
+# script that is no longer there, on every single turn.
+sandbox
+cat > "$(S)" <<'OLD'
+{
+  "mine": [1, 2],
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "echo mine" } ] },
+      { "hooks": [ { "type": "command", "command": "bash /home/u/.claude/critter-heartbeat.sh" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "touch /home/u/.claude/.critter-awake" } ] }
+    ]
+  }
+}
+OLD
+install
+is    "stale critter hook removed"  "$(q '.hooks.Stop | length')" "1"
+is    "user hook survived"          "$(q '.hooks.Stop[0].hooks[0].command')" "echo mine"
+is    "empty hook group dropped"    "$(q '.hooks.UserPromptSubmit // "none"')" "none"
+is    "unrelated key kept"          "$(jq -c '.mine' "$(S)" 2>/dev/null)" "[1,2]"
+cleanup
+
+echo
+echo "reinstall is idempotent"
+sandbox
+install --terminal --commands
+first="$(cat "$(S)")"
+install --terminal --commands
+is "second run leaves settings identical" \
+   "$([ "$(cat "$(S)")" = "$first" ] && echo same || echo changed)" "same"
+cleanup
+
+echo
+echo "revert restores what was there"
+sandbox
+printf '{\n  "theme": "dark",\n  "mine": [1, 2],\n  "hooks": {\n    "Stop": [ { "hooks": [ { "type": "command", "command": "echo mine" } ] } ]\n  }\n}\n' \
+  > "$(S)"
+printf '# my own notes\n' > "$HOME/.claude/CLAUDE.md"
+before_md="$(cat "$HOME/.claude/CLAUDE.md")"
+before_settings="$(cat "$(S)")"
+install --terminal --commands
+is "install changed settings.json" \
+   "$([ "$(cat "$(S)")" = "$before_settings" ] && echo same || echo changed)" "changed"
+revert
+is    "CLAUDE.md restored"    "$(cat "$HOME/.claude/CLAUDE.md")" "$before_md"
+is    "user theme restored"   "$(q '.theme')" "dark"
+is    "unrelated key kept"    "$(jq -c '.mine' "$(S)" 2>/dev/null)" "[1,2]"
+is    "user hook survived"    "$(q '.hooks.Stop[0].hooks[0].command')" "echo mine"
+is    "our statusLine gone"   "$(q '.statusLine // "none"')" "none"
+is    "our spinnerVerbs gone" "$(q '.spinnerVerbs // "none"')" "none"
+hasnt "statusline removed"    "$HOME/.claude/statusline.sh"
+hasnt "/pet removed"          "$HOME/.claude/commands/pet.md"
+hasnt "manifest removed"      "$HOME/.claude/.cute-claude-manifest"
+cleanup
+
+echo
+echo "revert of a settings.json we created deletes it"
+sandbox
+install --terminal
+has   "settings.json created"  "$(S)"
+revert
+hasnt "settings.json removed"  "$(S)"
+cleanup
+
+echo
+echo "statusline renders"
+sandbox
+install --terminal
+SL="$HOME/.claude/statusline.sh"
+TR="$SANDBOX/transcript.jsonl"; : > "$TR"
+payload="{\"workspace\":{\"current_dir\":\"/tmp/proj\"},\"context_window\":{\"used_percentage\":12},\"transcript_path\":\"$TR\"}"
+render() { printf '%s' "$payload" | STATUSLINE_FRAME=0 HOME="$SANDBOX" bash "$SL" \
+             | sed 's/\x1b\[[0-9;]*m//g'; }
+# wc -m, not awk length: the faces differ in byte count but not in display
+# width, and it is display width that decides whether the line jitters.
+width()  { render | wc -m | tr -d ' '; }
+
+rm -f "$PET"
+is "shows the directory"   "$(render | grep -c 'proj')" "1"
+is "awake face by default" "$(render | grep -c 'ฅ\^•ﻌ•\^ฅ')" "1"
+base_width="$(width)"
+
+# Idleness is read from the transcript's mtime, so no hook has to report it.
+age_file "$TR" 1200
+is "naps when the transcript goes quiet" "$(render | grep -c 'ฅ\^-ﻌ-\^ฅ')" "1"
+is "napping keeps the line width"        "$(width)" "$base_width"
+
+: > "$TR"
+is "wakes when the transcript moves" "$(render | grep -c 'ฅ\^•ﻌ•\^ฅ')" "1"
+
+# A missing transcript must not read as "idle forever" — no signal means awake.
+payload='{"workspace":{"current_dir":"/tmp/proj"},"context_window":{"used_percentage":12}}'
+is "no transcript still renders awake" "$(render | grep -c 'ฅ\^•ﻌ•\^ฅ')" "1"
+
+payload="{\"workspace\":{\"current_dir\":\"/tmp/proj\"},\"context_window\":{\"used_percentage\":12},\"transcript_path\":\"$TR\"}"
+touch "$PET"
+is "petted outranks napping"  "$(age_file "$TR" 1200; render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "1"
+is "petted keeps the width"   "$(width)" "$base_width"
+rm -f "$PET"
+cleanup
+
+echo
 echo "dependencies"
 sandbox
 SHIM="$SANDBOX/shim"; mkdir -p "$SHIM"
-for b in bash cat cp mv rm rmdir mkdir chmod date stat grep sed awk tr cut cksum uname sleep touch printf env; do
+for b in bash cat cp mv rm rmdir mkdir chmod date stat grep sed awk tr cut cksum uname id touch printf env; do
   src="$(command -v "$b" 2>/dev/null)" && ln -sf "$src" "$SHIM/$b"
 done
-# No jq on PATH at all: must refuse before writing anything.
-out="$(HOME="$SANDBOX" PATH="$SHIM" bash "$INSTALLER" 2>&1)"; rc=$?
-is    "refuses without jq"          "$rc" "1"
-is    "says what to install"        "$(printf '%s' "$out" | grep -ci 'jq')" "$(printf '%s' "$out" | grep -ci 'jq')"
-is    "mentions jq"                 "$([ "$(printf '%s' "$out" | grep -ci jq)" -gt 0 ] && echo yes)" "yes"
-hasnt "wrote nothing at all"        "$HOME/.claude/CLAUDE.md"
-hasnt "no settings.json either"     "$(S)"
-# python3 is not needed by the installer.
+# A default install never opens settings.json, so it must not ask for jq.
+HOME="$SANDBOX" PATH="$SHIM" bash "$INSTALLER" >/dev/null 2>&1; rc=$?
+is  "bare install succeeds without jq" "$rc" "0"
+has "CLAUDE.md written without jq"     "$HOME/.claude/CLAUDE.md"
+cleanup
+
+sandbox
+SHIM="$SANDBOX/shim"; mkdir -p "$SHIM"
+for b in bash cat cp mv rm rmdir mkdir chmod date stat grep sed awk tr cut cksum uname id touch printf env; do
+  src="$(command -v "$b" 2>/dev/null)" && ln -sf "$src" "$SHIM/$b"
+done
+# --terminal does open it, so there it is a hard requirement, refused up front.
+out="$(HOME="$SANDBOX" PATH="$SHIM" bash "$INSTALLER" --terminal 2>&1)"; rc=$?
+is    "--terminal refuses without jq" "$rc" "1"
+is    "mentions jq"                   "$([ "$(printf '%s' "$out" | grep -ci jq)" -gt 0 ] && echo yes)" "yes"
+hasnt "wrote nothing at all"          "$HOME/.claude/CLAUDE.md"
+hasnt "no settings.json either"       "$(S)"
 ln -sf "$(command -v jq)" "$SHIM/jq"
 HOME="$SANDBOX" PATH="$SHIM" bash "$INSTALLER" --terminal >/dev/null 2>&1
-is    "installs fine without python3" "$(q '.hooks.Stop | length')" "2"
+is    "installs fine without python3" "$(q '.statusLine.type')" "command"
 HOME="$SANDBOX" PATH="$SHIM" bash "$INSTALLER" --revert >/dev/null 2>&1
 hasnt "reverts fine without python3"  "$HOME/.claude/.cute-claude-manifest"
 cleanup
@@ -225,19 +242,18 @@ cleanup
 echo
 echo "rejects nonsense"
 sandbox
-if install --afk-interval banana; then bad "non-numeric interval rejected"; else ok "non-numeric interval rejected"; fi
-if install --afk-interval 99999; then bad "interval past the cache lifetime rejected"; else ok "interval past the cache lifetime rejected"; fi
-if install --vibe sideways;      then bad "unknown vibe rejected";      else ok "unknown vibe rejected"; fi
-if install --profile sideways;   then bad "unknown profile rejected";   else ok "unknown profile rejected"; fi
+if install --vibe sideways;    then bad "unknown vibe rejected";    else ok "unknown vibe rejected"; fi
+if install --profile sideways; then bad "unknown profile rejected"; else ok "unknown profile rejected"; fi
+if install --nonsense;         then bad "unknown flag rejected";    else ok "unknown flag rejected"; fi
 cleanup
 
 echo
 echo "critter with a name that would break json"
 sandbox
-install --critter 'we"ird'
-is "quote stripped from the heartbeat prompt" \
-   "$(grep -c 'critter=weird' "$HOME/.claude/critter-heartbeat.sh")" "1"
+install --terminal --critter 'we"ird'
 is "settings.json still parses" "$(q 'type')" "object"
+is "critter name reached CLAUDE.md" \
+   "$(grep -c 'we"ird' "$HOME/.claude/CLAUDE.md")" "1"
 cleanup
 
 echo
@@ -262,15 +278,11 @@ is "no build markers survive" \
 
 echo
 echo "assets stand alone"
-for a in statusline heartbeat; do
-  is "$a is valid bash"  "$(bash -n "$ROOT/src/assets/$a.sh" 2>&1 | wc -l | tr -d ' ')" "0"
-done
+is "statusline is valid bash" "$(bash -n "$ROOT/src/assets/statusline.sh" 2>&1 | wc -l | tr -d ' ')" "0"
 sandbox
 is "statusline asset renders" \
    "$(printf '%s' '{"workspace":{"current_dir":"/tmp/proj"}}' \
       | HOME="$SANDBOX" bash "$ROOT/src/assets/statusline.sh" | sed 's/\x1b\[[0-9;]*m//g' | grep -c proj)" "1"
-is "heartbeat asset is silent unarmed" \
-   "$(printf '{}' | HOME="$SANDBOX" bash "$ROOT/src/assets/heartbeat.sh")" ""
 cleanup
 
 echo
