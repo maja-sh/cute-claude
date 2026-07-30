@@ -28,9 +28,10 @@ revert()  { HOME="$SANDBOX" bash "$INSTALLER" --revert >/dev/null 2>&1; }
 S() { printf '%s/.claude/settings.json' "$SANDBOX"; }
 q() { jq -r "$1" "$(S)" 2>/dev/null; }
 
-# The marker /pet writes. Deliberately outside ~/.claude — see PET_FILE in the
-# installer — so the tests have to look for it where it really lives.
-PET="/tmp/cute-claude-petted-$(id -u 2>/dev/null || echo 0)"
+# One line of transcript, as Claude Code would append it. /pet is detected by
+# reading these back rather than by any file the command writes, because it is
+# not permitted to write one anywhere.
+tr_line() { printf '%s\n' "$1" >> "$TR"; }
 
 # Backdate a file. GNU touch takes -d @epoch; BSD needs -t with a formatted
 # stamp, so try both rather than assuming which platform this is running on.
@@ -41,7 +42,7 @@ age_file() { # $1 = path, $2 = seconds ago
 }
 
 REAL_HOME="$HOME"
-trap 'HOME="$REAL_HOME"; rm -f "$PET"' EXIT
+trap 'HOME="$REAL_HOME"' EXIT
 
 command -v jq >/dev/null 2>&1 || { echo "these tests need jq" >&2; exit 1; }
 
@@ -88,18 +89,21 @@ done
 cleanup
 
 echo
-echo "/pet writes outside ~/.claude"
-# Regression test. A slash command's !\`...\` line is permission-checked, and
-# Claude Code refuses writes anywhere under ~/.claude as sensitive files, so a
-# marker there makes /pet fail outright for every user.
+echo "/pet executes nothing"
+# Regression test, twice over. A slash command's !`...` line is
+# permission-checked and every absolute path is refused: under ~/.claude as a
+# sensitive file, anywhere else as outside the session's working directory. So
+# the command must not try to run anything at all.
 sandbox
 install --commands --terminal
-is "marker path is not under ~/.claude" \
+is "no shell execution line at all" \
+   "$(grep -c '^!' "$HOME/.claude/commands/pet.md")" "0"
+is "writes nowhere under ~/.claude" \
    "$(grep -c '\.claude' "$HOME/.claude/commands/pet.md")" "0"
-is "marker path is the shared /tmp one" \
-   "$(grep -cF "touch \"$PET\"" "$HOME/.claude/commands/pet.md")" "1"
-is "statusline looks for the same path" \
-   "$(grep -cF "pet_file='$PET'" "$HOME/.claude/statusline.sh")" "1"
+is "writes nowhere in /tmp either" \
+   "$(grep -c '/tmp' "$HOME/.claude/commands/pet.md")" "0"
+is "carries the sentinel the statusline looks for" \
+   "$(grep -c 'cute-claude:petted' "$HOME/.claude/commands/pet.md")" "1"
 cleanup
 
 echo
@@ -184,7 +188,6 @@ render() { printf '%s' "$payload" | STATUSLINE_FRAME=0 HOME="$SANDBOX" bash "$SL
 # width, and it is display width that decides whether the line jitters.
 width()  { render | wc -m | tr -d ' '; }
 
-rm -f "$PET"
 is "shows the directory"   "$(render | grep -c 'proj')" "1"
 is "awake face by default" "$(render | grep -c 'ฅ\^•ﻌ•\^ฅ')" "1"
 base_width="$(width)"
@@ -202,10 +205,23 @@ payload='{"workspace":{"current_dir":"/tmp/proj"},"context_window":{"used_percen
 is "no transcript still renders awake" "$(render | grep -c 'ฅ\^•ﻌ•\^ฅ')" "1"
 
 payload="{\"workspace\":{\"current_dir\":\"/tmp/proj\"},\"context_window\":{\"used_percentage\":12},\"transcript_path\":\"$TR\"}"
-touch "$PET"
-is "petted outranks napping"  "$(age_file "$TR" 1200; render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "1"
-is "petted keeps the width"   "$(width)" "$base_width"
-rm -f "$PET"
+
+# Petting is read out of the transcript rather than a marker file, because a
+# slash command is not permitted to write one anywhere.
+: > "$TR"
+tr_line '{"type":"user","message":"<command-name>/pet</command-name>"}'
+is "petted face comes from the transcript" "$(render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "1"
+is "petted keeps the width"                "$(width)" "$base_width"
+
+# It outranks napping: the transcript can be stale and still hold the pet.
+age_file "$TR" 1200
+is "petted outranks napping" "$(render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "1"
+
+# And it expires on its own as the conversation moves past it.
+: > "$TR"
+tr_line '{"type":"user","message":"<command-name>/pet</command-name>"}'
+for i in 1 2 3 4 5 6 7 8; do tr_line "{\"type\":\"assistant\",\"n\":$i}"; done
+is "wears off once the turn has passed" "$(render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "0"
 cleanup
 
 echo

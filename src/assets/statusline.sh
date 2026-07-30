@@ -13,7 +13,6 @@ faces=('ฅ^•ﻌ•^ฅ' 'ฅ^•ﻌ•^ฅ' 'ฅ^˘ﻌ˘^ฅ' 'ฅ^•ﻌ•^
 weary='ฅ^×ﻌ×^ฅ'
 asleep='ฅ^-ﻌ-^ฅ'
 pleased='ฅ^ᵕﻌᵕ^ฅ'
-pet_file="/tmp/cute-claude-petted-$(id -u 2>/dev/null || echo 0)"
 # @build:strip-end
 input=$(cat)
 
@@ -90,19 +89,23 @@ if [ -n "$transcript" ] && [ -f "$transcript" ]; then
   case "$mtime" in ''|*[!0-9]*) mtime="$now" ;; esac
   idle_secs=$(( now - mtime ))
 fi
-# /pet touches this file, so the buddy looks pleased for a minute afterwards.
-# The path is baked in above by the installer — it lives in /tmp rather than
-# ~/.claude because a slash command is not permitted to write there.
+# /pet used to leave a marker file, which cannot work: a slash command's !`...`
+# line is permission-checked, and every absolute path is refused — under
+# ~/.claude as a sensitive file, outside it as beyond the session's allowed
+# working directory. Writing into the workspace itself would litter the repo.
+#
+# So nothing is written. Running /pet is recorded in the transcript like any
+# other prompt, and this looks for it there. Checking only the last few lines
+# bounds it to roughly the turn it happened in, and it expires on its own as the
+# conversation moves on — no timestamp arithmetic, no state, no permissions.
 petted=0
-if [ -f "$pet_file" ]; then
-  pmtime=$(stat -c %Y "$pet_file" 2>/dev/null || stat -f %m "$pet_file" 2>/dev/null || printf 0)
-  case "$pmtime" in ''|*[!0-9]*) pmtime=0 ;; esac
-  if [ "$(( now - pmtime ))" -lt 60 ]; then
-    petted=1
-    printf -v pad_m '%*s' 1 ''
-    buddy="${pad_m}${pleased}${pad_m}"
-    sparkle="♡"
-  fi
+if [ -n "$transcript" ] && [ -f "$transcript" ] &&
+   tail -n 6 "$transcript" 2>/dev/null |
+     grep -q -e 'cute-claude:petted' -e '<command-name>/\{0,1\}pet</command-name>'; then
+  petted=1
+  printf -v pad_m '%*s' 1 ''
+  buddy="${pad_m}${pleased}${pad_m}"
+  sparkle="♡"
 fi
 
 napping=0

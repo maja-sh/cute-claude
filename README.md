@@ -52,9 +52,12 @@ statusline and spinner verbs are **terminal-only**: they are Claude Code's own
 CLI chrome, and other frontends draw their own UI, so there is no surface for
 them to appear on.
 
-`/pet` leaves a marker in `/tmp` rather than `~/.claude`. A slash command's
-`` !`...` `` line is permission-checked and Claude Code refuses writes anywhere
-under `~/.claude` as sensitive, so a marker there fails outright.
+Nothing here writes anything at runtime. A slash command's `` !`...` `` line is
+permission-checked, and every absolute path it could use is refused — under
+`~/.claude` as a sensitive file, anywhere else as outside the session's allowed
+working directory — so `/pet` executes nothing at all. The statusline notices it
+by reading the transcript instead, which needs no permission and works in every
+frontend.
 
 ## Options
 
