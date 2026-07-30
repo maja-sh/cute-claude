@@ -33,6 +33,13 @@ q() { jq -r "$1" "$(S)" 2>/dev/null; }
 # not permitted to write one anywhere.
 tr_line() { printf '%s\n' "$1" >> "$TR"; }
 
+# A /pet invocation exactly as Claude Code records it. Copied from a real
+# transcript, not invented: the entry is type "system" with subtype
+# "local_command", and the command name lives inside a "content" string.
+pet_entry() {
+  tr_line '{"type":"system","subtype":"local_command","content":"<command-name>/pet</command-name>\\n<command-message>pet</command-message>\\n<command-args></command-args>","level":"info"}'
+}
+
 # Backdate a file. GNU touch takes -d @epoch; BSD needs -t with a formatted
 # stamp, so try both rather than assuming which platform this is running on.
 age_file() { # $1 = path, $2 = seconds ago
@@ -209,7 +216,7 @@ payload="{\"workspace\":{\"current_dir\":\"/tmp/proj\"},\"context_window\":{\"us
 # Petting is read out of the transcript rather than a marker file, because a
 # slash command is not permitted to write one anywhere.
 : > "$TR"
-tr_line '{"type":"user","message":"<command-name>/pet</command-name>"}'
+pet_entry
 is "petted face comes from the transcript" "$(render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "1"
 is "petted keeps the width"                "$(width)" "$base_width"
 
@@ -219,7 +226,7 @@ is "petted outranks napping" "$(render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "1"
 
 # And it expires on its own as the conversation moves past it.
 : > "$TR"
-tr_line '{"type":"user","message":"<command-name>/pet</command-name>"}'
+pet_entry
 for i in 1 2 3 4 5 6 7 8; do tr_line "{\"type\":\"assistant\",\"n\":$i}"; done
 is "wears off once the turn has passed" "$(render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "0"
 cleanup
