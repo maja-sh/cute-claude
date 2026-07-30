@@ -45,6 +45,8 @@ Options:
   --upgrade              Reinstall using the options recorded by the last run,
                          so you do not have to remember which flags you used.
                          Any flag you pass explicitly still overrides them.
+  --doctor               Check the install is not just present but actually
+                         wired up, and report anything half-applied.
   --list                 Show the built-in critters and exit.
   --revert               Undo everything and restore what was there before.
   -h, --help             This text.
@@ -83,6 +85,7 @@ DO_REVERT=0
 DO_LIST=0
 DO_APPEND=0
 DO_UPGRADE=0
+DO_DOCTOR=0
 # Which knobs were named on the command line. --upgrade replays what the last
 # install recorded, but only for knobs this run did not set explicitly.
 CRITTER_SET=0
@@ -100,6 +103,7 @@ while [ $# -gt 0 ]; do
     --commands) DO_COMMANDS=1; COMMANDS_SET=1; shift ;;
     --append) DO_APPEND=1; shift ;;
     --upgrade) DO_UPGRADE=1; shift ;;
+    --doctor) DO_DOCTOR=1; shift ;;
     --list) DO_LIST=1; shift ;;
     --revert|--uninstall) DO_REVERT=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -474,6 +478,173 @@ fi
 if [ "$DO_LIST" -eq 1 ]; then
   do_list
   exit 0
+fi
+
+# ------------------------------------------------------------------ doctor --
+# "Is it installed" is the easy question and not the useful one. Files can be
+# present while nothing is wired: a settings.json rewritten by another tool
+# drops statusLine and the theme, and the statusline script sits there doing
+# nothing with no error anywhere. This checks the wiring, not the inventory.
+
+D_PROBLEMS=0
+d_ok()   { printf '    \033[32m✔\033[0m %s\n' "$1"; }
+d_note() { printf '    \033[33m~\033[0m %s\n' "$1"; }
+d_bad()  { printf '    \033[31m✘\033[0m %s\n' "$1"; D_PROBLEMS=$((D_PROBLEMS + 1)); }
+
+do_doctor() {
+  echo
+  echo "cute-claude doctor"
+  echo
+
+  local have_manifest=1
+  [ -f "$MANIFEST" ] || have_manifest=0
+
+  if [ "$have_manifest" -eq 0 ] && [ ! -f "$HOME/.claude/CLAUDE.md" ]; then
+    echo "  nothing is installed — no manifest and no CLAUDE.md."
+    return 1
+  fi
+
+  local jq_ok=0
+  command -v jq >/dev/null 2>&1 && jq_ok=1
+
+  # An install predating the manifest is precisely the one most likely to have
+  # drifted, so checking the wiring anyway is worth more than refusing. Only the
+  # checksum and recorded-options parts genuinely need the manifest.
+  if [ "$have_manifest" -eq 0 ]; then
+    echo "  files"
+    d_note "no manifest — this install predates it, so per-file checks are skipped"
+    d_note "--revert cannot help either; reinstall to get a manifest"
+    echo
+  fi
+
+  [ "$have_manifest" -eq 1 ] && echo "  files"
+  local kind path val rec cur
+  [ "$have_manifest" -eq 1 ] && while IFS=$'\t' read -r kind path val; do
+    case "$kind" in
+      created|backup|settings)
+        if [ -e "$path" ]; then
+          rec="$(manifest_sum "$path")"
+          if [ -n "$rec" ]; then
+            cur="$(file_sum "$path")"
+            if [ "$cur" = "$rec" ]; then d_ok "${path##*/} — as written"
+            else d_note "${path##*/} — edited since install (your version is the live one)"; fi
+          else
+            d_ok "${path##*/} — present"
+          fi
+        else
+          d_bad "${path##*/} — recorded but missing from disk"
+        fi ;;
+    esac
+  done < "$MANIFEST"
+
+  echo
+  echo "  wiring"
+
+  local want_terminal want_commands
+  if [ "$have_manifest" -eq 1 ]; then
+    want_terminal="$(manifest_opt terminal)"
+    want_commands="$(manifest_opt commands)"
+  else
+    # Inferred from what is present, since there is nothing recorded to consult.
+    want_terminal=0; want_commands=0
+    [ -f "$HOME/.claude/statusline.sh" ] && want_terminal=1
+    [ -f "$HOME/.claude/commands/pet.md" ] && want_commands=1
+  fi
+
+  if [ -f "$HOME/.claude/CLAUDE.md" ] && grep -q 'how to talk to me' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
+    d_ok "CLAUDE.md carries the tone guide"
+  else
+    d_bad "CLAUDE.md is missing the tone guide — the persona is not loaded"
+  fi
+
+  if [ "$want_commands" = "1" ]; then
+    local missing=0 c
+    for c in pet treat critter; do
+      [ -f "$HOME/.claude/commands/$c.md" ] || missing=1
+    done
+    if [ "$missing" -eq 0 ]; then d_ok "/pet, /treat and /critter are present"
+    else d_bad "--commands was recorded but some command files are gone"; fi
+  fi
+
+  if [ "$want_terminal" = "1" ]; then
+    if [ "$jq_ok" -eq 0 ]; then
+      d_note "jq is not installed, so settings.json cannot be checked"
+    elif [ ! -f "$SETTINGS" ]; then
+      d_bad "--terminal was recorded but settings.json is gone — nothing is wired"
+    else
+      local sl theme verbs
+      sl="$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null)"
+      theme="$(jq -r '.theme // empty' "$SETTINGS" 2>/dev/null)"
+      verbs="$(jq -r '.spinnerVerbs.verbs | length' "$SETTINGS" 2>/dev/null)"
+
+      if [ -z "$sl" ]; then
+        d_bad "statusLine is not set in settings.json — the statusline never runs"
+      elif ! printf '%s' "$sl" | grep -q statusline.sh; then
+        d_note "statusLine points somewhere else: $sl"
+      elif [ ! -f "$HOME/.claude/statusline.sh" ]; then
+        d_bad "statusLine points at statusline.sh, which is not there"
+      elif [ ! -x "$HOME/.claude/statusline.sh" ]; then
+        d_bad "statusline.sh is not executable"
+      else
+        d_ok "statusLine runs statusline.sh"
+      fi
+
+      case "$theme" in
+        custom:kitten) d_ok "theme 'custom:kitten' is selected" ;;
+        "")            d_note "no theme selected — run /theme and pick 'kitten ✦'" ;;
+        *)             d_note "a different theme is selected ('$theme') — that is fine if deliberate" ;;
+      esac
+
+      case "$verbs" in
+        ''|0|null) d_bad "spinnerVerbs are not set in settings.json" ;;
+        *)         d_ok "spinner verbs set ($verbs of them)" ;;
+      esac
+    fi
+  fi
+
+  # Nothing this version writes puts hooks in settings.json, so any left are
+  # orphans from a build that still had /afk, invoking a script that is gone.
+  if [ "$jq_ok" -eq 1 ] && [ -f "$SETTINGS" ]; then
+    local orphans
+    orphans="$(jq '[.hooks // {} | .[][]? | .hooks[]? | select(.command | test("critter"))] | length' \
+                 "$SETTINGS" 2>/dev/null)"
+    case "$orphans" in
+      ''|0|null) ;;
+      *) d_bad "$orphans leftover hook(s) from an older install — re-run to clear them" ;;
+    esac
+  fi
+
+  if [ "$have_manifest" -eq 0 ]; then
+    echo
+    if [ "$D_PROBLEMS" -eq 0 ]; then echo "  wiring looks right ♡"
+    else printf '  %s problem(s) found.\n' "$D_PROBLEMS"; fi
+    printf '\n  reinstall to get a manifest, so --revert and --upgrade work:\n\n'
+    printf '      %s --terminal\n\n' "$PROG"
+    [ "$D_PROBLEMS" -eq 0 ] && return 0
+    return 1
+  fi
+
+  echo
+  echo "  recorded options"
+  printf '    critter %s · vibe %s · terminal %s · commands %s\n' \
+    "$(manifest_opt critter)" "$(manifest_opt vibe)" \
+    "$(manifest_opt terminal)" "$(manifest_opt commands)"
+  local extra; extra="$(manifest_opt vibe-extra)"
+  [ -n "$extra" ] && printf '    vibe-extra: %s\n' "$extra"
+
+  echo
+  if [ "$D_PROBLEMS" -eq 0 ]; then
+    echo "  all wired up ♡"
+    return 0
+  fi
+  printf '  %s problem(s) found. most are fixed by reinstalling:\n\n' "$D_PROBLEMS"
+  printf '      %s --upgrade\n\n' "$PROG"
+  return 1
+}
+
+if [ "$DO_DOCTOR" -eq 1 ]; then
+  do_doctor
+  exit $?
 fi
 
 # ----------------------------------------------------------------- install --

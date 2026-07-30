@@ -259,6 +259,53 @@ is "and does not re-prepend"       "$(grep -c 'my own rules' "$HOME/.claude/CLAU
 cleanup
 
 echo
+echo "--doctor"
+doctor() { HOME="$SANDBOX" bash "$INSTALLER" --doctor 2>&1; }
+sandbox
+install --terminal --commands
+out="$(doctor)"; rc=$?
+is "healthy install passes"   "$rc" "0"
+is "says so"                  "$(printf '%s' "$out" | grep -c 'all wired up')" "1"
+
+# The failure this exists for: files present, wiring silently gone.
+jq 'del(.statusLine)' "$(S)" > "$SANDBOX/t" && mv "$SANDBOX/t" "$(S)"
+out="$(doctor)"; rc=$?
+is "unwired statusLine is caught" "$rc" "1"
+is "and named"                    "$(printf '%s' "$out" | grep -c 'statusLine is not set')" "1"
+
+install --upgrade
+out="$(doctor)"; rc=$?
+is "--upgrade repairs it" "$rc" "0"
+
+rm -f "$HOME/.claude/themes/kitten.json"
+is "a missing recorded file is caught" "$(doctor >/dev/null 2>&1; echo $?)" "1"
+cleanup
+
+# Orphaned hooks from a pre-drop install must be reported, not ignored.
+sandbox
+install --terminal
+jq '.hooks.Stop = [{hooks:[{type:"command",command:"bash ~/.claude/critter-heartbeat.sh"}]}]' \
+   "$(S)" > "$SANDBOX/t" && mv "$SANDBOX/t" "$(S)"
+out="$(doctor)"
+is "leftover hooks reported" "$(printf '%s' "$out" | grep -c 'leftover hook')" "1"
+cleanup
+
+# A pre-manifest install is the one most likely to have drifted, so the wiring
+# checks still have to run rather than bailing out.
+sandbox
+install --terminal
+rm -f "$HOME/.claude/.cute-claude-manifest"
+out="$(doctor)"; rc=$?
+is "no manifest still checks wiring" "$rc" "0"
+is "and says the manifest is absent" "$(printf '%s' "$out" | grep -c 'no manifest')" "1"
+is "and still verified statusLine"   "$(printf '%s' "$out" | grep -c 'statusLine runs')" "1"
+cleanup
+
+sandbox
+is "nothing installed at all" "$(doctor >/dev/null 2>&1; echo $?)" "1"
+cleanup
+
+echo
 echo "dependencies"
 sandbox
 SHIM="$SANDBOX/shim"; mkdir -p "$SHIM"

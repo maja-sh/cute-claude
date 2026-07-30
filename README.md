@@ -68,6 +68,7 @@ under `~/.claude` as sensitive, so a marker there fails outright.
 | `--commands` | `/pet`, `/treat`, `/critter` |
 | `--append` | keep an existing `CLAUDE.md` and add the tone guide below it |
 | `--upgrade` | reinstall with the options the last run recorded |
+| `--doctor` | check the install is actually wired up, not merely present |
 | `--list` | show the built-in critters |
 | `--revert` | undo everything |
 | `--version` | which build this is |
@@ -76,6 +77,23 @@ An unknown critter is fully supported, not a fallback: it gets a face chosen
 deterministically from its name, and `CLAUDE.md` asks Claude to invent that
 critter's noises and habits and keep them consistent. The flavor is generated at
 read time by the thing reading it.
+
+## Checking it works
+
+```sh
+dist/cute.sh --doctor
+```
+
+"Is it installed" is the easy question and not the useful one. Files can all be
+present while nothing is wired: something rewrites `settings.json`, `statusLine`
+and the theme go with it, and the statusline script sits there doing nothing
+with no error anywhere to tell you. `--doctor` checks the wiring rather than the
+inventory, reports anything half-applied, and exits non-zero if it found a
+problem.
+
+It also works on installs predating the manifest — those are the ones most
+likely to have drifted, so it runs the wiring checks anyway and only skips the
+per-file checksums it has nothing to compare against.
 
 ## Upgrading
 
