@@ -40,6 +40,11 @@ Options:
   --commands             Also install /pet, /treat and /critter as slash
                          commands. Works everywhere, including the VS Code
                          panel. Off by default, and never on for --profile work.
+  --append               If ~/.claude/CLAUDE.md already exists and is not ours,
+                         add the tone guide below it instead of replacing it.
+  --upgrade              Reinstall using the options recorded by the last run,
+                         so you do not have to remember which flags you used.
+                         Any flag you pass explicitly still overrides them.
   --list                 Show the built-in critters and exit.
   --revert               Undo everything and restore what was there before.
   -h, --help             This text.
@@ -76,15 +81,25 @@ DO_TERMINAL=0
 DO_COMMANDS=0
 DO_REVERT=0
 DO_LIST=0
+DO_APPEND=0
+DO_UPGRADE=0
+# Which knobs were named on the command line. --upgrade replays what the last
+# install recorded, but only for knobs this run did not set explicitly.
+CRITTER_SET=0
+EXTRA_SET=0
+TERMINAL_SET=0
+COMMANDS_SET=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --critter) CRITTER="${2:-cat}"; shift 2 ;;
+    --critter) CRITTER="${2:-cat}"; CRITTER_SET=1; shift 2 ;;
     --vibe) VIBE="${2:-cute}"; VIBE_SET=1; shift 2 ;;
     --profile) PROFILE="${2:-}"; shift 2 ;;
-    --vibe-extra) VIBE_EXTRA="${2:-}"; shift 2 ;;
-    --terminal) DO_TERMINAL=1; shift ;;
-    --commands) DO_COMMANDS=1; shift ;;
+    --vibe-extra) VIBE_EXTRA="${2:-}"; EXTRA_SET=1; shift 2 ;;
+    --terminal) DO_TERMINAL=1; TERMINAL_SET=1; shift ;;
+    --commands) DO_COMMANDS=1; COMMANDS_SET=1; shift ;;
+    --append) DO_APPEND=1; shift ;;
+    --upgrade) DO_UPGRADE=1; shift ;;
     --list) DO_LIST=1; shift ;;
     --revert|--uninstall) DO_REVERT=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -95,6 +110,12 @@ done
 
 # Profiles are a base layer only — an explicit --vibe or --terminal still wins,
 # so `--profile work --vibe cute` does what it says rather than silently losing.
+if [ "$DO_UPGRADE" -eq 1 ] && [ -n "$PROFILE" ]; then
+  echo "--upgrade and --profile cannot be combined: both want to be the base" >&2
+  echo "  layer under your explicit flags. pick one." >&2
+  exit 1
+fi
+
 case "$PROFILE" in
   "") ;;
   work)
@@ -177,6 +198,8 @@ preflight_deps() {
 #   created  — file did not exist before us; revert deletes it
 #   backup   — file existed; revert restores <backup> over it
 #   settings — like backup, but revert un-merges only our keys
+#   sum      — checksum of a file as we wrote it, to detect later user edits
+#   opt      — one install option, so --upgrade can replay this run's flags
 #
 # Entries are never overwritten on reinstall: the first install's record is the
 # one that points at the genuinely pristine file.
@@ -185,7 +208,7 @@ manifest_has() {
   [ -f "$MANIFEST" ] || return 1
   local kind path rest
   while IFS=$'\t' read -r kind path rest; do
-    [ "$kind" = "sum" ] && continue
+    case "$kind" in sum|opt) continue ;; esac
     [ "$path" = "$1" ] && return 0
   done < "$MANIFEST"
   return 1
@@ -213,6 +236,29 @@ manifest_set_sum() { # $1 = path, $2 = sum
     mv "$MANIFEST.tmp" "$MANIFEST"
   fi
   printf 'sum\t%s\t%s\n' "$1" "$2" >> "$MANIFEST"
+}
+
+# Install options are recorded one per line rather than as a single flag string,
+# so --upgrade can restore them without eval and without caring that a critter
+# name might contain spaces or quotes.
+manifest_set_opt() { # $1 = name, $2 = value
+  local line drop
+  drop="opt	$1	"
+  if [ -f "$MANIFEST" ]; then
+    while IFS= read -r line; do
+      case "$line" in "$drop"*) ;; *) printf '%s\n' "$line" ;; esac
+    done < "$MANIFEST" > "$MANIFEST.tmp"
+    mv "$MANIFEST.tmp" "$MANIFEST"
+  fi
+  printf 'opt\t%s\t%s\n' "$1" "$2" >> "$MANIFEST"
+}
+
+manifest_opt() { # $1 = name -> prints the recorded value, or nothing
+  [ -f "$MANIFEST" ] || return 0
+  local kind name val
+  while IFS=$'\t' read -r kind name val; do
+    if [ "$kind" = "opt" ] && [ "$name" = "$1" ]; then printf '%s' "$val"; return 0; fi
+  done < "$MANIFEST"
 }
 
 # Before overwriting a file we previously wrote, check the user has not edited
@@ -340,7 +386,7 @@ do_revert() {
         else
           echo "  ! could not restore $path from $bak" >&2; failed=1
         fi ;;
-      sum) continue ;;
+      sum|opt) continue ;;
       settings)
         revert_settings "$path" "$bak" || { failed=1; true; } ;;
       *)
@@ -393,6 +439,27 @@ do_list() {
   echo "name and keep them consistent — so the flavor IS generated, just at read"
   echo "time by the thing reading it, rather than baked in here."
 }
+
+if [ "$DO_UPGRADE" -eq 1 ]; then
+  if [ ! -f "$MANIFEST" ]; then
+    echo "--upgrade needs a previous install to read options from, and there is" >&2
+    echo "  no manifest at $MANIFEST. run it once with the flags you want." >&2
+    exit 1
+  fi
+  v="$(manifest_opt critter)"; [ -n "$v" ] && [ "$CRITTER_SET" -eq 0 ] && CRITTER="$v"
+  v="$(manifest_opt vibe)";    [ -n "$v" ] && [ "$VIBE_SET" -eq 0 ] && VIBE="$v"
+  v="$(manifest_opt vibe-extra)"; [ -n "$v" ] && [ "$EXTRA_SET" -eq 0 ] && VIBE_EXTRA="$v"
+  v="$(manifest_opt terminal)"; [ -n "$v" ] && [ "$TERMINAL_SET" -eq 0 ] && DO_TERMINAL="$v"
+  v="$(manifest_opt commands)"; [ -n "$v" ] && [ "$COMMANDS_SET" -eq 0 ] && DO_COMMANDS="$v"
+  # A recorded vibe was valid when it was recorded, but the manifest is a plain
+  # text file a person can edit, so do not trust it into the generated output.
+  case "$VIBE" in
+    cute|dry) ;;
+    *) echo "the recorded vibe ('$VIBE') is not one this version knows." >&2
+       echo "  pass --vibe cute or --vibe dry explicitly." >&2; exit 1 ;;
+  esac
+  echo "• --upgrade: replaying recorded options (critter: $CRITTER, vibe: $VIBE)"
+fi
 
 if [ "$DO_REVERT" -eq 1 ]; then
   # Only the settings entry needs jq to undo; a CLAUDE.md-only install reverts
@@ -482,10 +549,36 @@ else
 fi
 
 TARGET="$HOME/.claude/CLAUDE.md"
+
+# A CLAUDE.md we have no recorded checksum for is one we never wrote — someone's
+# own global instructions. Replacing it is the single most destructive thing
+# this script does, and unlike everything else it is a file people hand-write.
+# It is still backed up and still revertible, so this warns rather than refuses:
+# refusing by default would break the one-line install for the exact people most
+# likely to have opinions about it. --append keeps theirs and adds ours below.
+FOREIGN_MD=0
+if [ -f "$TARGET" ] && [ -z "$(manifest_sum "$TARGET")" ]; then FOREIGN_MD=1; fi
+
+PREFIX_MD=""
+if [ "$FOREIGN_MD" -eq 1 ]; then
+  if [ "$DO_APPEND" -eq 1 ]; then
+    PREFIX_MD="$(cat "$TARGET")"
+  else
+    echo "  ! $TARGET already exists and was not written by cute-claude."
+    echo "    it is backed up below and about to be replaced."
+    echo "    to keep yours and add the tone guide underneath instead:"
+    echo "        $PROG --append"
+  fi
+fi
+
 claim "$TARGET"
 guard_edits "$TARGET"
 
 {
+  if [ -n "$PREFIX_MD" ]; then
+    printf '%s\n\n' "$PREFIX_MD"
+    printf -- '---\n\n'
+  fi
   printf '# how to talk to me ♡\n\n'
   printf '## about me — *(borrowing this file? change the critter below!)*\n'
   printf -- '- **critter:** `%s` %s — %s\n' "$CRITTER" "$EMOJI" "$FLAVOR"
@@ -561,6 +654,14 @@ RULES
 } > "$TARGET"
 
 manifest_set_sum "$TARGET" "$(file_sum "$TARGET")"
+
+# Recorded after the first successful write, so --upgrade replays a run that
+# actually got somewhere rather than one that died halfway.
+manifest_set_opt critter    "$CRITTER"
+manifest_set_opt vibe       "$VIBE"
+manifest_set_opt vibe-extra "$VIBE_EXTRA"
+manifest_set_opt terminal   "$DO_TERMINAL"
+manifest_set_opt commands   "$DO_COMMANDS"
 
 echo "• installed $TARGET  (critter: $CRITTER $EMOJI)"
 echo "  ^ this works EVERYWHERE — terminal, VS Code panel, Zed. restart Claude Code to load it."

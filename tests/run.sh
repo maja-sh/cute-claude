@@ -209,6 +209,56 @@ rm -f "$PET"
 cleanup
 
 echo
+echo "--upgrade replays recorded options"
+sandbox
+install --critter raven --vibe dry --terminal
+install --upgrade
+is  "critter remembered"  "$(grep -c 'raven' "$HOME/.claude/CLAUDE.md")" "1"
+is  "vibe remembered"     "$(grep -c 'dry wit is the register' "$HOME/.claude/CLAUDE.md")" "1"
+has "--terminal remembered" "$HOME/.claude/statusline.sh"
+# An explicit flag still wins over the recorded value.
+install --upgrade --critter fox
+is  "explicit flag overrides the record" "$(grep -c 'fox' "$HOME/.claude/CLAUDE.md")" "1"
+is  "unset knobs still come from the record" \
+    "$(grep -c 'dry wit is the register' "$HOME/.claude/CLAUDE.md")" "1"
+cleanup
+
+sandbox
+if install --upgrade; then bad "--upgrade needs a manifest"; else ok "--upgrade needs a manifest"; fi
+install
+if install --upgrade --profile work; then bad "--upgrade rejects --profile"
+else ok "--upgrade rejects --profile"; fi
+cleanup
+
+echo
+echo "a CLAUDE.md we did not write"
+sandbox
+printf '# my own rules\n' > "$HOME/.claude/CLAUDE.md"
+out="$(HOME="$SANDBOX" bash "$INSTALLER" 2>&1)"
+is "warns it was not ours" \
+   "$(printf '%s' "$out" | grep -c 'was not written by cute-claude')" "1"
+is "points at --append" "$(printf '%s' "$out" | grep -c ' --append')" "1"
+is "replaced by default"  "$(grep -c 'how to talk to me' "$HOME/.claude/CLAUDE.md")" "1"
+revert
+is "revert brings it back" "$(cat "$HOME/.claude/CLAUDE.md")" "# my own rules"
+cleanup
+
+sandbox
+printf '# my own rules\n' > "$HOME/.claude/CLAUDE.md"
+install --append
+is "--append keeps the original"   "$(grep -c 'my own rules' "$HOME/.claude/CLAUDE.md")" "1"
+is "--append adds the tone guide"  "$(grep -c 'how to talk to me' "$HOME/.claude/CLAUDE.md")" "1"
+is "the original stays on top" \
+   "$(awk '/my own rules/{a=NR} /how to talk to me/{b=NR} END{print (a<b) ? "yes" : "no"}' \
+      "$HOME/.claude/CLAUDE.md")" "yes"
+# Once we have written it, it is ours — a second run must not stack another copy.
+install --append
+is "second --append does not duplicate" \
+   "$(grep -c 'how to talk to me' "$HOME/.claude/CLAUDE.md")" "1"
+is "and does not re-prepend"       "$(grep -c 'my own rules' "$HOME/.claude/CLAUDE.md")" "0"
+cleanup
+
+echo
 echo "dependencies"
 sandbox
 SHIM="$SANDBOX/shim"; mkdir -p "$SHIM"

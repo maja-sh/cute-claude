@@ -66,6 +66,8 @@ under `~/.claude` as sensitive, so a marker there fails outright.
 | `--profile <work\|personal>` | shorthand. `work` = `--vibe dry`; `personal` = cute + `--terminal --commands` |
 | `--terminal` | theme, statusline, spinner verbs |
 | `--commands` | `/pet`, `/treat`, `/critter` |
+| `--append` | keep an existing `CLAUDE.md` and add the tone guide below it |
+| `--upgrade` | reinstall with the options the last run recorded |
 | `--list` | show the built-in critters |
 | `--revert` | undo everything |
 | `--version` | which build this is |
@@ -74,6 +76,33 @@ An unknown critter is fully supported, not a fallback: it gets a face chosen
 deterministically from its name, and `CLAUDE.md` asks Claude to invent that
 critter's noises and habits and keep them consistent. The flavor is generated at
 read time by the thing reading it.
+
+## Upgrading
+
+```sh
+dist/cute.sh --upgrade
+```
+
+Each install records its own options in the manifest, so `--upgrade` replays
+them rather than making you remember whether it was `--critter raven --vibe dry
+--terminal`. Any flag you pass explicitly still wins; `--profile` is refused
+alongside it, because both want to be the base layer under your explicit flags
+and guessing which one wins is worse than saying so.
+
+## An existing `CLAUDE.md`
+
+If `~/.claude/CLAUDE.md` is there and cute-claude did not write it, that is
+someone's own global instructions — the one file here that people hand-write.
+It is backed up and replaced, with a warning saying so and pointing at:
+
+```sh
+dist/cute.sh --append
+```
+
+which keeps your file and puts the tone guide underneath it instead. Either way
+`--revert` restores exactly what you had. It warns rather than refusing, because
+refusing by default would break the one-line install for precisely the people
+most likely to have opinions about their `CLAUDE.md`.
 
 ## Reverting
 
