@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # cute-claude installer — sets up a warm, critter-flavored Claude Code persona.
 #
-# Self-contained: no sibling files. Needs bash, coreutils and jq — jq because
-# it merges into a settings.json it did not write, and that is not a job for
-# regexes. Checked up front, so a missing jq costs you nothing.
-# Safe to pipe:  curl -fsSL <url>/cute.sh | bash -s -- --critter bnuuy --terminal
+# Self-contained: no sibling files. Needs bash and coreutils. jq is required
+# only when settings.json is actually opened — see needs_settings — because
+# merging into a file we did not write is not a job for regexes. A default
+# install never opens it and never asks.
+#
+# Safe to pipe into bash: it takes no stdin of its own, so `| bash -s -- <flags>`
+# works. Deliberately no URL here — this file gets forked and renamed, and a
+# hardcoded domain would be wrong in every copy but one.
+#
 # Fully reversible:  cute.sh --revert
 set -euo pipefail
 

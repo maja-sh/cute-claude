@@ -15,13 +15,13 @@ had.
 ## Install
 
 ```sh
-curl -fsSL <url>/dist/cute.sh | bash
+curl -fsSL https://maja.sh/cute.sh | bash
 ```
 
 Pipe it flags the same way:
 
 ```sh
-curl -fsSL <url>/dist/cute.sh | bash -s -- --critter bnuuy --terminal
+curl -fsSL https://maja.sh/cute.sh | bash -s -- --critter bnuuy --terminal
 ```
 
 Or clone and run `dist/cute.sh` directly. Restart Claude Code afterwards.
@@ -35,6 +35,26 @@ Where it is needed it is required rather than optional, because merging into a
 before anything is written, so a missing dependency costs you nothing but the
 message telling you to install it — see the note above `preflight_deps` in
 `src/installer.sh`.
+
+## Verifying it before you run it
+
+Piping a script from someone's domain into your shell is a reasonable thing to
+refuse, so this is checkable rather than asking for trust.
+
+The build is reproducible — the same sources always produce a byte-identical
+`dist/cute.sh` — and `--version` prints a content hash of `src/`:
+
+```sh
+curl -fsSL https://maja.sh/cute.sh | bash -s -- --version   # cute-claude build N
+git clone … && cd cute-claude && ./build.sh --check          # same N, from source
+```
+
+Matching ids mean the file about to be piped is exactly what `src/` compiles to,
+verified against the repository rather than against the same host that served
+it. `build.sh --check` also fails if `dist/` was hand-edited, and the suite runs
+that check.
+
+Or skip the pipe entirely: clone it and run `dist/cute.sh`.
 
 ## What it writes
 
@@ -136,6 +156,12 @@ Files it created are deleted; files it replaced are restored from their backups;
 you changed since installing survives. If you edited a file it wrote, a reinstall
 keeps your version alongside as `<name>.local.<timestamp>` rather than
 discarding it.
+
+## Licence
+
+[0BSD](LICENSE) — do whatever you like with it, no attribution required. If you
+want to use it as a base for your own Claude personalisation, that is what it is
+for.
 
 ## Development
 
