@@ -302,7 +302,9 @@ manifest_add() { # kind path [backup]
 claim() {
   local path="$1" kind="${2:-backup}"
   if [ -e "$path" ]; then
-    local bak="$path.bak.$(stamp)"
+    # Declared then assigned: `local x=$(...)` would mask stamp's exit status.
+    local bak
+    bak="$path.bak.$(stamp)"
     if ! manifest_has "$path"; then
       cp "$path" "$bak"
       manifest_add "$kind" "$path" "$bak"
@@ -337,7 +339,7 @@ revert_settings_jq() { # $1 = settings.json, $2 = backup
 }
 
 revert_settings() { # $1 = settings.json, $2 = backup
-  local s="$1" bak="$2" rc=0
+  local s="$1" bak="$2"
   [ -f "$s" ] || return 0
   if [ ! -f "$bak" ]; then
     echo "  ! backup missing for $s — left alone" >&2

@@ -1,5 +1,7 @@
 # cute-claude
 
+[![ci](https://github.com/hbackman/cute-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/hbackman/cute-claude/actions/workflows/ci.yml)
+
 Sets up a warm, critter-flavored Claude Code persona: a tone guide in
 `CLAUDE.md`, and optionally a theme, an animated statusline, critter-flavored
 spinner verbs, and a handful of slash commands.
@@ -46,7 +48,8 @@ The build is reproducible — the same sources always produce a byte-identical
 
 ```sh
 curl -fsSL https://maja.sh/cute.sh | bash -s -- --version   # cute-claude build N
-git clone … && cd cute-claude && ./build.sh --check          # same N, from source
+git clone https://github.com/hbackman/cute-claude && cd cute-claude
+./build.sh --check                                          # same N, from source
 ```
 
 Matching ids mean the file about to be piped is exactly what `src/` compiles to,

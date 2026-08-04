@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # macOS is not redundant here. The code carries BSD/GNU fallbacks that never
+    # run on Linux at all — stat -f, touch -t, date -r — and a stock Mac's
+    # /bin/bash is 3.2, which is what `curl … | bash` actually resolves to for
+    # anyone who has not installed a newer one. Both are untested otherwise.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Preinstalled on the Ubuntu runners, absent on macOS.
+      - name: Install jq
+        if: runner.os == 'macOS'
+        run: brew install jq
+
+      - name: Record the shells under test
+        run: |
+          echo "PATH bash: $(bash --version | head -1)"
+          echo "/bin/bash: $(/bin/bash --version | head -1)"
+          echo "jq:        $(jq --version)"
+
+      # The trust story for `curl … | bash` is that the published artifact is
+      # reproducible from source. If this fails, dist/ was hand-edited or
+      # somebody forgot to rebuild, and the README's verification steps would
+      # mislead anyone who followed them.
+      - name: dist/ is reproducible from src/
+        run: ./build.sh --check
+
+      - name: Test suite
+        run: bash tests/run.sh
+
+      # The realistic macOS install path. `curl … | bash` uses whatever bash
+      # resolves to, which on a stock Mac is 3.2 — so run the suite under it
+      # explicitly rather than only under whatever the runner happens to ship.
+      - name: Test suite under /bin/bash
+        if: runner.os == 'macOS'
+        run: /bin/bash tests/run.sh
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      # dist/cute.sh rather than the src/ fragments: critters.sh is a bare case
+      # block that only makes sense once inlined, so the assembled artifact is
+      # the thing worth linting. statusline.sh is checked separately because it
+      # is designed to run standalone.
+      #
+      # Warning severity, not error — the project is clean at this level, so
+      # keep it that way rather than letting warnings accumulate.
+      - name: Lint
+        run: |
+          shellcheck --severity=warning \
+            build.sh \
+            tests/run.sh \
+            dist/cute.sh \
+            src/assets/statusline.sh
