@@ -22,11 +22,20 @@ had.
 curl -fsSL https://github.com/hbackman/cute-claude/releases/latest/download/cute.sh | bash
 ```
 
-Pipe it flags the same way:
+Pipe it flags the same way — everything after `--` goes to the installer:
 
 ```sh
-curl -fsSL https://github.com/hbackman/cute-claude/releases/latest/download/cute.sh | bash -s -- --critter bnuuy --terminal
+curl -fsSL https://github.com/hbackman/cute-claude/releases/latest/download/cute.sh | bash -s -- \
+  --profile personal \
+  --critter bnuuy \
+  --vibe dry \
+  --terminal \
+  --commands
 ```
+
+`--profile personal` is the base layer; `--vibe dry` overrides the `cute` it
+would otherwise set. The profile already implies `--terminal --commands`, so
+those two are only listed to show what it expands to.
 
 Or clone it and run `./build.sh` first — `dist/` is not committed.
 Restart Claude Code afterwards.
