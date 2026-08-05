@@ -1,0 +1,4 @@
+# The build artifact is not committed. It is produced by ./build.sh, published
+# by .github/workflows/release.yml, and verifiable by rebuilding from a tag —
+# the build is deterministic, so the same sources always yield the same file.
+dist/

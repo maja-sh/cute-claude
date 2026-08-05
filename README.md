@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/hbackman/cute-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/hbackman/cute-claude/actions/workflows/ci.yml)
 
-![demo](demo.gif)
+![demo](docs/demo.gif)
 
 Sets up a warm, critter-flavored Claude Code persona: a tone guide in
 `CLAUDE.md`, and optionally a theme, an animated statusline, critter-flavored
@@ -28,7 +28,8 @@ Pipe it flags the same way:
 curl -fsSL https://maja.sh/cute.sh | bash -s -- --critter bnuuy --terminal
 ```
 
-Or clone and run `dist/cute.sh` directly. Restart Claude Code afterwards.
+Or clone it and run `./build.sh` first — `dist/` is not committed.
+Restart Claude Code afterwards.
 
 Requires `bash` and coreutils. **`jq` is needed only when `settings.json` is
 actually opened** — that is, with `--terminal`, or when upgrading an install old
@@ -42,24 +43,32 @@ message telling you to install it — see the note above `preflight_deps` in
 
 ## Verifying it before you run it
 
-Piping a script from someone's domain into your shell is a reasonable thing to
+Piping a script from the internet into your shell is a reasonable thing to
 refuse, so this is checkable rather than asking for trust.
 
-The build is reproducible — the same sources always produce a byte-identical
-`dist/cute.sh` — and `--version` prints a content hash of `src/`:
+`maja.sh/cute.sh` redirects to the latest [release](../../releases), which is
+built from a tag by [the release workflow](.github/workflows/release.yml) —
+never uploaded by hand. Each release carries the script and a `.sha256`.
+
+The build is **deterministic**: identical sources always produce a
+byte-identical artifact, and `--version` prints a content hash of `src/`. So the
+published file can be reproduced from source rather than taken on faith:
 
 ```sh
 curl -fsSL https://maja.sh/cute.sh | bash -s -- --version   # cute-claude build N
+
 git clone https://github.com/hbackman/cute-claude && cd cute-claude
-./build.sh --check                                          # same N, from source
+git checkout <the release tag>
+./build.sh && ./dist/cute.sh --version                      # same N
 ```
 
-Matching ids mean the file about to be piped is exactly what `src/` compiles to,
-verified against the repository rather than against the same host that served
-it. `build.sh --check` also fails if `dist/` was hand-edited, and the suite runs
-that check.
+Matching build ids mean the file you are about to pipe is exactly what this
+source compiles to — verified against the repository rather than against the
+host that served it. CI asserts the determinism the check depends on, on every
+push.
 
-Or skip the pipe entirely: clone it and run `dist/cute.sh`.
+Or skip the pipe: clone it, run `./build.sh`, and execute `dist/cute.sh`
+yourself.
 
 ## What it writes
 
@@ -170,19 +179,19 @@ for.
 
 ## The demo
 
-`demo.gif` is rendered from `demo.cast`, an [asciinema](https://asciinema.org)
-recording, so it can be regenerated rather than re-shot when the faces change:
+`docs/demo.gif` is rendered from an [asciinema](https://asciinema.org) recording
+with [agg](https://github.com/asciinema/agg):
 
 ```sh
-agg demo.cast demo.gif --fps-cap 10 \
+agg demo.cast docs/demo.gif --fps-cap 10 \
   --font-family "Menlo,Ayuthaya,Courier New,STIX Two Math,Monaco,Hiragino Sans"
 ```
 
 The font list is not decoration. The critter face is assembled from Thai (`ฅ`),
 Arabic (`ﻌ`) and assorted modifier letters, none of which live in a coding font —
 a terminal resolves them through its own fallback chain, and a renderer has to be
-told the same chain or it draws tofu. Those specific families are what macOS
-picks; on Linux, substitute equivalents with the same coverage.
+told the same chain or it draws tofu. Those families are what macOS selects; on
+Linux, substitute equivalents with the same coverage.
 
 ## Development
 
@@ -191,13 +200,14 @@ build.sh                    src/ -> dist/cute.sh
 src/installer.sh            args, preflight, manifest, claim/revert, install flow
 src/critters.sh             the critter table — faces, spinner verbs, palettes
 src/assets/statusline.sh    the statusline program
-dist/cute.sh                the built artifact — this is what you install
+dist/cute.sh                the built artifact — gitignored, attached to releases
 tests/run.sh                the suite
 ```
 
-**Edit `src/`, never `dist/cute.sh`.** The artifact is generated and committed;
-hand-editing it is silently undone by the next build. `./build.sh --check`
-fails if `dist/` does not match `src/`, and the suite runs that check.
+**Edit `src/`, never `dist/cute.sh`.** The artifact is generated, gitignored,
+and published by the release workflow — anything you type into it is silently
+undone by the next build. `./build.sh --check` tells you whether your local
+`dist/` is stale.
 
 ```sh
 ./build.sh           # write dist/cute.sh

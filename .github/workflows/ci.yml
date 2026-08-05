@@ -35,12 +35,18 @@ jobs:
           echo "/bin/bash: $(/bin/bash --version | head -1)"
           echo "jq:        $(jq --version)"
 
-      # The trust story for `curl … | bash` is that the published artifact is
-      # reproducible from source. If this fails, dist/ was hand-edited or
-      # somebody forgot to rebuild, and the README's verification steps would
-      # mislead anyone who followed them.
-      - name: dist/ is reproducible from src/
-        run: ./build.sh --check
+      # dist/ is not committed, so there is no stored copy to compare against.
+      # The property that replaces it is determinism: identical sources must
+      # always produce a byte-identical artifact. That is the whole basis on
+      # which someone can verify a published cute.sh by rebuilding it from the
+      # matching tag, so it is worth asserting on every push.
+      - name: Build is deterministic
+        run: |
+          ./build.sh
+          cp dist/cute.sh /tmp/first
+          ./build.sh
+          cmp /tmp/first dist/cute.sh || {
+            echo "build is not deterministic" >&2; exit 1; }
 
       - name: Test suite
         run: bash tests/run.sh

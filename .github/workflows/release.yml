@@ -1,0 +1,74 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Build
+        run: ./build.sh
+
+      # dist/ is not in the repository, so there is no committed copy to check
+      # the artifact against. The property that replaces it is determinism: the
+      # same sources must always produce a byte-identical file. That is what
+      # lets anyone verify a published cute.sh by rebuilding it from this tag.
+      - name: Build is deterministic
+        run: |
+          cp dist/cute.sh /tmp/first
+          ./build.sh
+          cmp /tmp/first dist/cute.sh || {
+            echo "build is not deterministic — refusing to release" >&2
+            exit 1
+          }
+
+      - name: Test
+        run: bash tests/run.sh
+
+      # Published alongside the script so a checksum is available without
+      # having to trust the same host that served the file.
+      - name: Checksum
+        run: |
+          cd dist
+          sha256sum cute.sh > cute.sh.sha256
+          cat cute.sh.sha256
+
+      # gh is preinstalled on the runners, so this needs no third-party action
+      # and therefore no third-party trust — which matters more than usual for
+      # a project whose install path is `curl … | bash`.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            dist/cute.sh dist/cute.sh.sha256 \
+            --title "$TAG" \
+            --generate-notes \
+            --notes-file - <<NOTES
+          \`\`\`sh
+          curl -fsSL https://maja.sh/cute.sh | bash
+          \`\`\`
+
+          Build id: \`$(./dist/cute.sh --version | awk '{print $NF}')\`
+
+          The attached \`cute.sh\` is built from this tag by
+          [the release workflow](../../actions/workflows/release.yml). The build
+          is deterministic, so \`./build.sh\` at this tag reproduces it byte for
+          byte — check with \`--version\` or the attached \`.sha256\`.
+          NOTES
