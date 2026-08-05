@@ -19,13 +19,13 @@ had.
 ## Install
 
 ```sh
-curl -fsSL https://maja.sh/cute.sh | bash
+curl -fsSL https://github.com/hbackman/cute-claude/releases/latest/download/cute.sh | bash
 ```
 
 Pipe it flags the same way:
 
 ```sh
-curl -fsSL https://maja.sh/cute.sh | bash -s -- --critter bnuuy --terminal
+curl -fsSL https://github.com/hbackman/cute-claude/releases/latest/download/cute.sh | bash -s -- --critter bnuuy --terminal
 ```
 
 Or clone it and run `./build.sh` first — `dist/` is not committed.
@@ -46,29 +46,28 @@ message telling you to install it — see the note above `preflight_deps` in
 Piping a script from the internet into your shell is a reasonable thing to
 refuse, so this is checkable rather than asking for trust.
 
-`maja.sh/cute.sh` redirects to the latest [release](../../releases), which is
-built from a tag by [the release workflow](.github/workflows/release.yml) —
-never uploaded by hand. Each release carries the script and a `.sha256`.
+Every release is built from a tag by
+[the release workflow](.github/workflows/release.yml), never uploaded by hand,
+and carries the script alongside a `.sha256`.
 
 The build is **deterministic**: identical sources always produce a
 byte-identical artifact, and `--version` prints a content hash of `src/`. So the
 published file can be reproduced from source rather than taken on faith:
 
 ```sh
-curl -fsSL https://maja.sh/cute.sh | bash -s -- --version   # cute-claude build N
+curl -fsSL https://github.com/hbackman/cute-claude/releases/latest/download/cute.sh | bash -s -- --version      # cute-claude build N
 
 git clone https://github.com/hbackman/cute-claude && cd cute-claude
 git checkout <the release tag>
-./build.sh && ./dist/cute.sh --version                      # same N
+./build.sh && ./dist/cute.sh --version       # same N
 ```
 
 Matching build ids mean the file you are about to pipe is exactly what this
-source compiles to — verified against the repository rather than against the
-host that served it. CI asserts the determinism the check depends on, on every
-push.
+source compiles to — verified against the repository rather than against
+whatever host served it. CI asserts that determinism on every push.
 
-Or skip the pipe: clone it, run `./build.sh`, and execute `dist/cute.sh`
-yourself.
+Or skip the pipe entirely: clone it, run `./build.sh`, and execute
+`dist/cute.sh` yourself.
 
 ## What it writes
 
@@ -176,22 +175,6 @@ discarding it.
 [0BSD](LICENSE) — do whatever you like with it, no attribution required. If you
 want to use it as a base for your own Claude personalisation, that is what it is
 for.
-
-## The demo
-
-`docs/demo.gif` is rendered from an [asciinema](https://asciinema.org) recording
-with [agg](https://github.com/asciinema/agg):
-
-```sh
-agg demo.cast docs/demo.gif --fps-cap 10 \
-  --font-family "Menlo,Ayuthaya,Courier New,STIX Two Math,Monaco,Hiragino Sans"
-```
-
-The font list is not decoration. The critter face is assembled from Thai (`ฅ`),
-Arabic (`ﻌ`) and assorted modifier letters, none of which live in a coding font —
-a terminal resolves them through its own fallback chain, and a renderer has to be
-told the same chain or it draws tofu. Those families are what macOS selects; on
-Linux, substitute equivalents with the same coverage.
 
 ## Development
 
