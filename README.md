@@ -2,6 +2,8 @@
 
 [![ci](https://github.com/hbackman/cute-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/hbackman/cute-claude/actions/workflows/ci.yml)
 
+![demo](demo.gif)
+
 Sets up a warm, critter-flavored Claude Code persona: a tone guide in
 `CLAUDE.md`, and optionally a theme, an animated statusline, critter-flavored
 spinner verbs, and a handful of slash commands.
@@ -165,6 +167,22 @@ discarding it.
 [0BSD](LICENSE) — do whatever you like with it, no attribution required. If you
 want to use it as a base for your own Claude personalisation, that is what it is
 for.
+
+## The demo
+
+`demo.gif` is rendered from `demo.cast`, an [asciinema](https://asciinema.org)
+recording, so it can be regenerated rather than re-shot when the faces change:
+
+```sh
+agg demo.cast demo.gif --fps-cap 10 \
+  --font-family "Menlo,Ayuthaya,Courier New,STIX Two Math,Monaco,Hiragino Sans"
+```
+
+The font list is not decoration. The critter face is assembled from Thai (`ฅ`),
+Arabic (`ﻌ`) and assorted modifier letters, none of which live in a coding font —
+a terminal resolves them through its own fallback chain, and a renderer has to be
+told the same chain or it draws tofu. Those specific families are what macOS
+picks; on Linux, substitute equivalents with the same coverage.
 
 ## Development
 
