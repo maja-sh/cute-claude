@@ -66,6 +66,11 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
+      # dist/ is not committed, so the artifact has to be produced before it can
+      # be linted.
+      - name: Build
+        run: ./build.sh
+
       # dist/cute.sh rather than the src/ fragments: critters.sh is a bare case
       # block that only makes sense once inlined, so the assembled artifact is
       # the thing worth linting. statusline.sh is checked separately because it
