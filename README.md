@@ -1,6 +1,6 @@
 # cute-claude
 
-[![ci](https://github.com/hbackman/cute-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/hbackman/cute-claude/actions/workflows/ci.yml)
+[![ci](https://github.com/maja-sh/cute-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/maja-sh/cute-claude/actions/workflows/ci.yml)
 
 ![demo](docs/demo.gif)
 
@@ -19,13 +19,13 @@ had.
 ## Install
 
 ```sh
-curl -fsSL https://github.com/hbackman/cute-claude/releases/latest/download/cute.sh | bash
+curl -fsSL https://github.com/maja-sh/cute-claude/releases/latest/download/cute.sh | bash
 ```
 
 Pass it flags the same way — everything after `--` goes to the installer:
 
 ```sh
-curl -fsSL https://github.com/hbackman/cute-claude/releases/latest/download/cute.sh | bash -s -- \
+curl -fsSL https://github.com/maja-sh/cute-claude/releases/latest/download/cute.sh | bash -s -- \
   --profile personal \
   --critter bnuuy \
   --vibe dry \
@@ -62,9 +62,9 @@ byte-identical artifact, and `--version` prints a content hash of `src/`. So
 you can reproduce the published file from source rather than take it on faith:
 
 ```sh
-curl -fsSL https://github.com/hbackman/cute-claude/releases/latest/download/cute.sh | bash -s -- --version      # cute-claude build N
+curl -fsSL https://github.com/maja-sh/cute-claude/releases/latest/download/cute.sh | bash -s -- --version      # cute-claude build N
 
-git clone https://github.com/hbackman/cute-claude && cd cute-claude
+git clone https://github.com/maja-sh/cute-claude && cd cute-claude
 git checkout <the release tag>
 ./build.sh && ./dist/cute.sh --version       # same N
 ```
