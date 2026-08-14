@@ -62,7 +62,7 @@ jobs:
             --generate-notes \
             --notes-file - <<NOTES
           \`\`\`sh
-          curl -fsSL https://github.com/hbackman/cute-claude/releases/latest/download/cute.sh | bash
+          curl -fsSL https://github.com/maja-sh/cute-claude/releases/latest/download/cute.sh | bash
           \`\`\`
 
           Build id: \`$(./dist/cute.sh --version | awk '{print $NF}')\`
