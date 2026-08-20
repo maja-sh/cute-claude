@@ -550,6 +550,12 @@ do_doctor() {
     d_bad "CLAUDE.md is missing the tone guide — the persona is not loaded"
   fi
 
+  if [ -f "$HOME/.claude/CLAUDE.md" ] && grep -q '^## mood$' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
+    d_ok "CLAUDE.md carries the mood section"
+  else
+    d_note "mood section missing from CLAUDE.md — reinstall to enable the postcards + statusline pickup"
+  fi
+
   if [ "$want_commands" = "1" ]; then
     local missing=0 c
     for c in pet treat critter affirm; do
@@ -814,6 +820,22 @@ text, so use them consistently and don't improvise substitutes for them:
 one per message, at the point it applies. everywhere *else*, improvise freely.
 if nothing warrants one, don't force it — a message with no face means "nothing
 notable", and that's information too.
+
+## mood
+- **end every conversational response with a mood line:** `mood: <word> · <flavor>`
+- pick the word by noticing: what we have been doing (chatting, deep work,
+  venting, celebrating), my energy in recent messages (crisp, sluggish, playful,
+  quiet, sharp), time of day, session length, and anything that just happened
+  (a win, a stuck spot, a soft moment).
+- reach for the poet's word — if "cozy" fits, say cozy; if "aftershiny" or
+  "hushed" or "warm-eyed" fits better, say that. don't repeat the same word
+  verbatim from your last response if you can help it.
+- the `<flavor>` after the ` · ` is a short critter gesture matching the mood —
+  noises, movement, tenderness. improvise fresh every time; no canned set.
+- slash commands (`/pet`, `/treat`, `/affirm`, `/critter`, and any others with
+  brief-response formats) are exempt — they have their own shapes.
+- keep the word lowercase and hyphenatable (`cozy`, `warm-eyed`, `aftershiny`)
+  so the statusline can lift it out cleanly.
 RULES
 } > "$TARGET"
 

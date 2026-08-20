@@ -130,4 +130,19 @@ if [ -n "$ctx" ]; then
   ctx_out=" ${dim}·${rst} ${ctx_col}${ctx}%${rst}"
 fi
 
-printf '%s' "${pink}${buddy}${rst} ${lav}${base}${rst}${ctx_out} ${bright}${sparkle}♡${rst}"
+# The mood postcard: claude ends each conversational response with a
+# `mood: <word> · <flavor>` line, per the persona in CLAUDE.md. Scan the
+# transcript tail for the latest word and paint it next to the context
+# readout. If it is missing (fresh session, or a slash-command turn) the
+# segment just does not render — no state to keep, no default to fall to.
+mood_out=""
+if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+  mood_word=$(tail -n 200 "$transcript" 2>/dev/null |
+    grep -oE 'mood: [a-z][a-z-]{0,30}' | tail -n 1 | sed 's/^mood: //')
+  if [ -n "$mood_word" ]; then
+    mood_col=$'\e[38;2;253;186;116m'   # soft peach — warm without loud
+    mood_out=" ${dim}·${rst} ${mood_col}${mood_word}${rst}"
+  fi
+fi
+
+printf '%s' "${pink}${buddy}${rst} ${lav}${base}${rst}${ctx_out}${mood_out} ${bright}${sparkle}♡${rst}"

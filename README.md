@@ -99,6 +99,24 @@ working directory — so `/pet` doesn't actually execute anything. The statuslin
 notices it by reading the transcript instead, which needs no permission and
 works in every frontend.
 
+## Mood postcards
+
+Every conversational response ends with a small mood line:
+
+```
+mood: cozy · *stretching in the last of the afternoon light*
+```
+
+The word — free vocabulary, whatever Claude thinks fits — appears in the
+response itself in every frontend. With `--terminal`, the statusline also
+lifts it out and shows it next to the context readout, so the critter's
+mood is visible at a glance.
+
+Slash commands (`/pet`, `/treat`, `/affirm`, `/critter`) are exempt from the
+rule; they have their own brief formats. The statusline picks the word up
+the same way it detects `/pet` — a small tail-read of the transcript, no
+hooks, no state file, no new mechanism.
+
 ## Options
 
 | Flag | Meaning |
