@@ -88,7 +88,7 @@ is   "spinner verbs are bnuuy flavoured" \
      "$(q '.spinnerVerbs.verbs | map(select(. == "Binkying")) | length')" "1"
 # No hooks, in any form, ever again.
 is   "installs no hooks"          "$(q '.hooks // "none"')" "none"
-for f in pet treat critter; do
+for f in pet treat critter affirm; do
   is "/$f frontmatter is well formed" \
      "$(awk 'NR>1 && /^---$/{exit} NR>1 && /^disable-model-invocation: true$/{n++} END{print n+0}' \
         "$HOME/.claude/commands/$f.md")" "1"

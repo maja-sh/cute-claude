@@ -84,7 +84,7 @@ Or skip the pipe entirely: clone it, run `./build.sh`, and execute
 | `~/.claude/settings.json` | statusline, spinner verbs, theme | `--terminal` (merged, never replaced) |
 | `~/.claude/statusline.sh` | the animated statusline | `--terminal` |
 | `~/.claude/themes/kitten.json` | the color theme | `--terminal` |
-| `~/.claude/commands/{pet,treat,critter}.md` | `/pet`, `/treat`, `/critter` | `--commands` |
+| `~/.claude/commands/{pet,treat,critter,affirm}.md` | `/pet`, `/treat`, `/critter`, `/affirm` | `--commands` |
 
 `CLAUDE.md` and the slash commands work everywhere — the terminal, the VS Code
 panel, and Zed's ACP adapter all read `CLAUDE.md` directly. The theme,
@@ -108,7 +108,7 @@ works in every frontend.
 | `--vibe-extra "<words>"` | folds your own descriptor into the vibe line |
 | `--profile <work\|personal>` | shorthand. `work` = `--vibe dry`; `personal` = cute + `--terminal --commands` |
 | `--terminal` | theme, statusline, spinner verbs |
-| `--commands` | `/pet`, `/treat`, `/critter` |
+| `--commands` | `/pet`, `/treat`, `/critter`, `/affirm` |
 | `--append` | keep an existing `CLAUDE.md` and add the tone guide below it |
 | `--upgrade` | reinstall with the options the last run recorded |
 | `--doctor` | check the install is actually wired up, not merely present |
