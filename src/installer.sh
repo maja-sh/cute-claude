@@ -42,7 +42,7 @@ Options:
                          --terminal --commands. Explicit flags still override.
   --terminal             Also install the theme, statusline, and spinner verbs.
                          TERMINAL ONLY — these do nothing in the VS Code panel.
-  --commands             Also install /pet, /treat and /critter as slash
+  --commands             Also install /pet, /treat, /critter and /affirm as slash
                          commands. Works everywhere, including the VS Code
                          panel. Off by default, and never on for --profile work.
   --append               If ~/.claude/CLAUDE.md already exists and is not ours,
@@ -552,10 +552,10 @@ do_doctor() {
 
   if [ "$want_commands" = "1" ]; then
     local missing=0 c
-    for c in pet treat critter; do
+    for c in pet treat critter affirm; do
       [ -f "$HOME/.claude/commands/$c.md" ] || missing=1
     done
-    if [ "$missing" -eq 0 ]; then d_ok "/pet, /treat and /critter are present"
+    if [ "$missing" -eq 0 ]; then d_ok "/pet, /treat, /critter and /affirm are present"
     else d_bad "--commands was recorded but some command files are gone"; fi
   fi
 
@@ -1014,18 +1014,32 @@ what we have actually worked on this session, how it is going, and your current
 mood about it. Be honest rather than reassuring — if this session has been a
 slog, say so. No task list, no offers of help, no next steps.
 CRITTER
+
+  cat <<AFFIRM > "$d/affirm.md"
+---
+name: affirm
+description: a little affirmation from the $CRITTER
+disable-model-invocation: true
+---
+I want an affirmation. Improvise fresh — no canned lines, no reused phrasing.
+Deliver it in character as a $CRITTER: noises, gestures, a little tenderness.
+If I gave context after the command, let it shift the tone — celebration for
+a win, comfort for a hard moment, courage before something scary. With no
+context it is pure warmth with no reason attached. Two or three lines. No
+advice, no fixing — just warmth. Chat only; do not touch files or tasks.
+AFFIRM
 }
 
 if [ "$DO_COMMANDS" -eq 1 ]; then
   echo
   echo "• --commands: installing slash commands"
   mkdir -p "$HOME/.claude/commands"
-  for c in pet treat critter; do
+  for c in pet treat critter affirm; do
     claim "$HOME/.claude/commands/$c.md"
     guard_edits "$HOME/.claude/commands/$c.md"
   done
   write_commands "$HOME/.claude/commands"
-  for c in pet treat critter; do
+  for c in pet treat critter affirm; do
     manifest_set_sum "$HOME/.claude/commands/$c.md" "$(file_sum "$HOME/.claude/commands/$c.md")"
     echo "  - /$c"
   done
