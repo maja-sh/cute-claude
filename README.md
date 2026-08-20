@@ -193,6 +193,7 @@ src/critters.sh             the critter table — faces, spinner verbs, palettes
 src/assets/statusline.sh    the statusline program
 dist/cute.sh                the built artifact — gitignored, attached to releases
 tests/run.sh                the suite
+tests/try.sh                sandbox install into a throwaway HOME, then launch claude
 ```
 
 **Edit `src/`, never `dist/cute.sh`.** The artifact is generated and published
@@ -203,6 +204,7 @@ next build. `./build.sh --check` tells you whether your local `dist/` is stale.
 ./build.sh           # write dist/cute.sh
 ./build.sh --check   # is dist/ current?
 bash tests/run.sh    # builds first, then tests the artifact
+bash tests/try.sh --commands   # sandbox install, opens claude in a temp HOME
 ```
 
 The build is a single rule: a line reading `# @inline <path>` gets replaced by
