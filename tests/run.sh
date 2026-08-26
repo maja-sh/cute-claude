@@ -63,6 +63,8 @@ echo "bare install"
 sandbox
 install
 has   "CLAUDE.md written"                "$HOME/.claude/CLAUDE.md"
+is    "CLAUDE.md carries the mood section" \
+      "$(grep -c '^## mood$' "$HOME/.claude/CLAUDE.md")" "1"
 hasnt "no statusline without --terminal" "$HOME/.claude/statusline.sh"
 hasnt "no /pet without --commands"       "$HOME/.claude/commands/pet.md"
 # The whole point of dropping the hooks: a default install is one file.
@@ -229,6 +231,25 @@ is "petted outranks napping" "$(render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "1"
 pet_entry
 for i in 1 2 3 4 5 6 7 8; do tr_line "{\"type\":\"assistant\",\"n\":$i}"; done
 is "wears off once the turn has passed" "$(render | grep -c 'ฅ\^ᵕﻌᵕ\^ฅ')" "0"
+
+# Mood postcard: claude ends every conversational response with a
+# `mood: <word> · <flavor>` line. The statusline lifts the latest word out of
+# the transcript tail. Nothing there means the segment simply does not render —
+# no default, no state to keep.
+: > "$TR"
+tr_line '{"type":"assistant","message":{"content":[{"type":"text","text":"here you go\nmood: cozy · *stretching*"}]}}'
+is "picks up the mood word"           "$(render | grep -c 'cozy')" "1"
+is "prints the word alone, no prefix" "$(render | grep -c 'mood:')" "0"
+
+# A newer entry with a fresher mood wins over the older one.
+tr_line '{"type":"assistant","message":{"content":[{"type":"text","text":"nice\nmood: aftershiny · *stretch*"}]}}'
+is "latest mood wins"                 "$(render | grep -c 'aftershiny')" "1"
+
+# Hyphenated words (warm-eyed, wide-eyed, aftershiny) are supported so the
+# vocabulary can grow past single tokens.
+: > "$TR"
+tr_line '{"type":"assistant","message":{"content":[{"type":"text","text":"ok\nmood: warm-eyed · *purr*"}]}}'
+is "hyphenated moods are allowed"     "$(render | grep -c 'warm-eyed')" "1"
 cleanup
 
 echo
