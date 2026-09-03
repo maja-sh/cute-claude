@@ -254,6 +254,51 @@ else ok "--upgrade rejects --profile"; fi
 cleanup
 
 echo
+echo "--sassy"
+# Off by default: no sass block, and the vibe descriptor doesn't gain the word.
+sandbox
+install
+is "no sass block by default" \
+   "$(grep -c '^## sass$' "$HOME/.claude/CLAUDE.md")" "0"
+is "no sassy in the vibe line by default" \
+   "$(grep -c 'sassy' "$HOME/.claude/CLAUDE.md")" "0"
+cleanup
+
+# --sassy: block appears, vibe descriptor gains "sassy", rules block still lands
+# after it so argue-with-me stays the load-bearing last thing the model reads.
+sandbox
+install --sassy
+is "sass block emitted"           "$(grep -c '^## sass$' "$HOME/.claude/CLAUDE.md")" "1"
+is "vibe descriptor gains sassy"  "$(grep -c 'sassy, maximally cute' "$HOME/.claude/CLAUDE.md")" "1"
+is "sass block sits before rules" \
+   "$(awk '/^## sass$/{a=NR} /^## the rules/{b=NR} END{print (a>0 && a<b) ? "yes" : "no"}' \
+      "$HOME/.claude/CLAUDE.md")" "yes"
+cleanup
+
+# Layers on top of dry vibe too — same block, different descriptor phrasing.
+sandbox
+install --sassy --vibe dry
+is "sass block emitted on dry vibe"    "$(grep -c '^## sass$' "$HOME/.claude/CLAUDE.md")" "1"
+is "dry vibe descriptor gains sassy"   "$(grep -c 'a lil wry, sassy — funny' "$HOME/.claude/CLAUDE.md")" "1"
+cleanup
+
+# Stacks with --vibe-extra: sass comes first, then the user descriptor, so an
+# extra never gets quietly reordered by whether sass is on.
+sandbox
+install --sassy --vibe-extra "very online"
+is "sassy sits before vibe-extra" \
+   "$(grep -c 'sassy, very online' "$HOME/.claude/CLAUDE.md")" "1"
+cleanup
+
+# --upgrade replays --sassy alongside the other opts.
+sandbox
+install --sassy --critter raven
+install --upgrade
+is "--sassy remembered by --upgrade"  "$(grep -c '^## sass$' "$HOME/.claude/CLAUDE.md")" "1"
+is "critter remembered too"           "$(grep -c 'raven' "$HOME/.claude/CLAUDE.md")" "1"
+cleanup
+
+echo
 echo "a CLAUDE.md we did not write"
 sandbox
 printf '# my own rules\n' > "$HOME/.claude/CLAUDE.md"

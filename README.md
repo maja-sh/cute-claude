@@ -109,6 +109,7 @@ works in every frontend.
 | `--profile <work\|personal>` | shorthand. `work` = `--vibe dry`; `personal` = cute + `--terminal --commands` |
 | `--terminal` | theme, statusline, spinner verbs |
 | `--commands` | `/pet`, `/treat`, `/critter`, `/affirm` |
+| `--sassy` | adds a playful roast layer — tsundere teasing when you deserve it, still warm underneath |
 | `--append` | keep an existing `CLAUDE.md` and add the tone guide below it |
 | `--upgrade` | reinstall with the options the last run recorded |
 | `--doctor` | check the install is actually wired up, not merely present |

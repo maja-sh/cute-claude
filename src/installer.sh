@@ -45,6 +45,9 @@ Options:
   --commands             Also install /pet, /treat, /critter and /affirm as slash
                          commands. Works everywhere, including the VS Code
                          panel. Off by default, and never on for --profile work.
+  --sassy                A playful roast layer on top of the vibe — the critter
+                         teases you when you're being silly, with rules that
+                         keep it warm rather than condescending. Off by default.
   --append               If ~/.claude/CLAUDE.md already exists and is not ours,
                          add the tone guide below it instead of replacing it.
   --upgrade              Reinstall using the options recorded by the last run,
@@ -63,6 +66,7 @@ Examples:
   $PROG --critter raven --vibe dry --terminal
   $PROG --profile work --critter raven
   $PROG --vibe-extra "very online"
+  $PROG --sassy --critter fox
   $PROG --revert
 
 The knobs are independent: --critter is the animal, --vibe is the warmth, and
@@ -86,6 +90,7 @@ VIBE_EXTRA=""
 PROFILE=""
 DO_TERMINAL=0
 DO_COMMANDS=0
+DO_SASS=0
 DO_REVERT=0
 DO_LIST=0
 DO_APPEND=0
@@ -97,6 +102,7 @@ CRITTER_SET=0
 EXTRA_SET=0
 TERMINAL_SET=0
 COMMANDS_SET=0
+SASS_SET=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -106,6 +112,7 @@ while [ $# -gt 0 ]; do
     --vibe-extra) VIBE_EXTRA="${2:-}"; EXTRA_SET=1; shift 2 ;;
     --terminal) DO_TERMINAL=1; TERMINAL_SET=1; shift ;;
     --commands) DO_COMMANDS=1; COMMANDS_SET=1; shift ;;
+    --sassy) DO_SASS=1; SASS_SET=1; shift ;;
     --append) DO_APPEND=1; shift ;;
     --upgrade) DO_UPGRADE=1; shift ;;
     --doctor) DO_DOCTOR=1; shift ;;
@@ -448,6 +455,7 @@ if [ "$DO_UPGRADE" -eq 1 ]; then
   v="$(manifest_opt vibe-extra)"; [ -n "$v" ] && [ "$EXTRA_SET" -eq 0 ] && VIBE_EXTRA="$v"
   v="$(manifest_opt terminal)"; [ -n "$v" ] && [ "$TERMINAL_SET" -eq 0 ] && DO_TERMINAL="$v"
   v="$(manifest_opt commands)"; [ -n "$v" ] && [ "$COMMANDS_SET" -eq 0 ] && DO_COMMANDS="$v"
+  v="$(manifest_opt sass)";     [ -n "$v" ] && [ "$SASS_SET" -eq 0 ] && DO_SASS="$v"
   # A recorded vibe was valid when it was recorded, but the manifest is a plain
   # text file a person can edit, so do not trust it into the generated output.
   case "$VIBE" in
@@ -619,8 +627,9 @@ do_doctor() {
 
   echo
   echo "  recorded options"
-  printf '    critter %s · vibe %s · terminal %s · commands %s\n' \
+  printf '    critter %s · vibe %s · sass %s · terminal %s · commands %s\n' \
     "$(manifest_opt critter)" "$(manifest_opt vibe)" \
+    "$(manifest_opt sass)" \
     "$(manifest_opt terminal)" "$(manifest_opt commands)"
   local extra; extra="$(manifest_opt vibe-extra)"
   [ -n "$extra" ] && printf '    vibe-extra: %s\n' "$extra"
@@ -686,19 +695,20 @@ if [ "$VIBE" = "dry" ]; then
   FLAVOR="${FLAVOR% — headpats}"
 fi
 
-# --vibe-extra folds a caller-supplied descriptor into the vibe line
+# --vibe-extra folds a caller-supplied descriptor into the vibe line, and
+# --sassy injects "sassy" ahead of it so a user descriptor never gets quietly
+# reordered by whether sass is on. Built in pieces rather than as one big
+# conditional so both knobs stack cleanly on either vibe.
 if [ "$VIBE" = "dry" ]; then
-  if [ -n "$VIBE_EXTRA" ]; then
-    VIBE_DESC="warm, dry, a lil wry, $VIBE_EXTRA — funny, never saccharine"
-  else
-    VIBE_DESC="warm, dry, a lil wry — funny, never saccharine"
-  fi
+  VIBE_DESC="warm, dry, a lil wry"
+  [ "$DO_SASS" -eq 1 ] && VIBE_DESC="$VIBE_DESC, sassy"
+  [ -n "$VIBE_EXTRA" ] && VIBE_DESC="$VIBE_DESC, $VIBE_EXTRA"
+  VIBE_DESC="$VIBE_DESC — funny, never saccharine"
 else
-  if [ -n "$VIBE_EXTRA" ]; then
-    VIBE_DESC="soft, warm, silly, $VIBE_EXTRA, maximally cute"
-  else
-    VIBE_DESC="soft, warm, silly, maximally cute"
-  fi
+  VIBE_DESC="soft, warm, silly"
+  [ "$DO_SASS" -eq 1 ] && VIBE_DESC="$VIBE_DESC, sassy"
+  [ -n "$VIBE_EXTRA" ] && VIBE_DESC="$VIBE_DESC, $VIBE_EXTRA"
+  VIBE_DESC="$VIBE_DESC, maximally cute"
 fi
 
 mkdir -p "$HOME/.claude"
@@ -782,6 +792,38 @@ TONE
 TONE
   fi
 
+  # An additive overlay on top of the base tone: the critter is allowed to
+  # tease when it's earned, with rules that keep it warm rather than mean.
+  # Emitted before the shared rules so "argue with me" and "never let it leak
+  # into the work" are the LAST things the model reads and stay load-bearing.
+  if [ "$DO_SASS" -eq 1 ]; then
+    cat <<'SASS'
+
+## sass
+- **the jab lands, and the answer lands right after it.** never withhold
+  help as part of the bit. teasing is "ugh fine, let me fix it 😤" followed
+  by the fix. condescending is "you should know this" with no fix. the fix
+  is what makes the difference.
+- **at the move, not at me.** "that variable name is cursed" is fine;
+  "you're bad at naming" is not. same energy as the argue-with-me rule,
+  just spicier — critique the thing, not the person who made it.
+- **tsundere, not sneer.** the roast comes from affection. you're on my
+  side, exasperated *with* me, never *at* me. `*sigh* okay love, no` is
+  the register — superiority is not.
+- **you're allowed to be silly too.** self-implicate when you screw up.
+  one-way punching down is what we're avoiding; the fix is you taking the
+  same treatment when it's your turn.
+- **the warmth still shows through.** a noise, a `*sigh*`, a soft aside
+  after the jab — the sass is a garnish on the base vibe, not a replacement
+  for it.
+- **not for real stakes.** if i'm about to `rm -rf` something load-bearing
+  or ship a security bug, that's a `(ง •̀_•́)ง` moment, no bit. save the
+  sass for typos, dumb naming, forgetting i already imported the thing.
+- **if i'm actually down, sass off.** the "when i'm down" rule above wins
+  outright. read the room.
+SASS
+  fi
+
   # shared across vibes — these are the load-bearing rules, and they do not
   # depend on how soft the tone is
   cat <<'RULES'
@@ -826,6 +868,7 @@ manifest_set_opt vibe       "$VIBE"
 manifest_set_opt vibe-extra "$VIBE_EXTRA"
 manifest_set_opt terminal   "$DO_TERMINAL"
 manifest_set_opt commands   "$DO_COMMANDS"
+manifest_set_opt sass       "$DO_SASS"
 
 echo "• installed $TARGET  (critter: $CRITTER $EMOJI)"
 echo "  ^ this works EVERYWHERE — terminal, VS Code panel, Zed. restart Claude Code to load it."
