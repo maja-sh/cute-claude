@@ -320,6 +320,129 @@ is "critter remembered too"           "$(grep -c 'raven' "$HOME/.claude/CLAUDE.m
 cleanup
 
 echo
+echo "shared tone rules"
+# Check-your-sources and the kaomoji escape land on every vibe, since dry still
+# allows sparing kaomoji and always uses the five status faces. Specific praise
+# is its own bullet on cute; dry already says it in its celebrate-wins line.
+sandbox
+install
+is "praise rule on cute"     "$(grep -c 'praise is specific' "$HOME/.claude/CLAUDE.md")" "1"
+is "kaomoji escape on cute"  "$(grep -c 'escape line-leading' "$HOME/.claude/CLAUDE.md")" "1"
+is "check-sources rule"      "$(grep -c 'check sources, don.t trust memory' "$HOME/.claude/CLAUDE.md")" "1"
+cleanup
+sandbox
+install --vibe dry
+is "praise stays specific on dry" "$(grep -c 'being specific about what' "$HOME/.claude/CLAUDE.md")" "1"
+is "no duplicate praise bullet on dry" "$(grep -c 'praise is specific' "$HOME/.claude/CLAUDE.md")" "0"
+is "kaomoji escape on dry"   "$(grep -c 'escape line-leading' "$HOME/.claude/CLAUDE.md")" "1"
+is "check-sources on dry"    "$(grep -c 'check sources, don.t trust memory' "$HOME/.claude/CLAUDE.md")" "1"
+cleanup
+
+echo
+echo "opt-in blocks are off by default"
+sandbox
+install
+is "no easy-to-read block"  "$(grep -c '^## easy to read$' "$HOME/.claude/CLAUDE.md")" "0"
+is "no scaffolding block"   "$(grep -c '^## scaffolding$' "$HOME/.claude/CLAUDE.md")" "0"
+is "no commits block"       "$(grep -c '^## commits$' "$HOME/.claude/CLAUDE.md")" "0"
+is "no sign-off block"      "$(grep -c '^## sign-off$' "$HOME/.claude/CLAUDE.md")" "0"
+cleanup
+
+echo
+echo "--focus"
+sandbox
+install --focus
+is "focus block emitted" "$(grep -c '^## easy to read$' "$HOME/.claude/CLAUDE.md")" "1"
+is "focus alone adds no scaffolding" "$(grep -c '^## scaffolding$' "$HOME/.claude/CLAUDE.md")" "0"
+is "focus block sits before rules" \
+   "$(awk '/^## easy to read$/{a=NR} /^## the rules/{b=NR} END{print (a>0 && a<b) ? "yes" : "no"}' \
+      "$HOME/.claude/CLAUDE.md")" "yes"
+cleanup
+sandbox
+install --focus --vibe dry
+is "focus block on dry vibe" "$(grep -c '^## easy to read$' "$HOME/.claude/CLAUDE.md")" "1"
+cleanup
+
+echo
+echo "--adhd"
+sandbox
+install --adhd
+is "scaffolding block emitted" "$(grep -c '^## scaffolding$' "$HOME/.claude/CLAUDE.md")" "1"
+is "adhd alone adds no focus block" "$(grep -c '^## easy to read$' "$HOME/.claude/CLAUDE.md")" "0"
+is "scaffolding sits before rules" \
+   "$(awk '/^## scaffolding$/{a=NR} /^## the rules/{b=NR} END{print (a>0 && a<b) ? "yes" : "no"}' \
+      "$HOME/.claude/CLAUDE.md")" "yes"
+cleanup
+sandbox
+install --adhd --focus --sassy
+is "adhd, focus and sass stack" \
+   "$(grep -cE '^## (scaffolding|easy to read|sass)$' "$HOME/.claude/CLAUDE.md")" "3"
+cleanup
+
+echo
+echo "--no-coauthor"
+sandbox
+install --no-coauthor
+is "commits block emitted" "$(grep -c '^## commits$' "$HOME/.claude/CLAUDE.md")" "1"
+is "names the trailer"     "$(grep -cF 'Co-Authored-By:' "$HOME/.claude/CLAUDE.md")" "1"
+cleanup
+
+echo
+echo "--signoff"
+sandbox
+install --signoff '\~\~\~'
+is "sign-off block emitted" "$(grep -c '^## sign-off$' "$HOME/.claude/CLAUDE.md")" "1"
+is "text is written verbatim" "$(grep -cF 'response with `\~\~\~` on its own line' "$HOME/.claude/CLAUDE.md")" "1"
+is "sign-off comes after the mood section" \
+   "$(awk '/^## mood$/{a=NR} /^## sign-off$/{b=NR} END{print (a>0 && a<b) ? "yes" : "no"}' \
+      "$HOME/.claude/CLAUDE.md")" "yes"
+install --upgrade
+is "signoff remembered by --upgrade" "$(grep -cF '`\~\~\~`' "$HOME/.claude/CLAUDE.md")" "1"
+install --upgrade --signoff 'bye'
+is "explicit signoff beats the recorded one" "$(grep -cF 'response with `bye`' "$HOME/.claude/CLAUDE.md")" "1"
+install --upgrade --signoff ''
+is "--upgrade --signoff '' clears it" "$(grep -c '^## sign-off$' "$HOME/.claude/CLAUDE.md")" "0"
+install --upgrade
+is "cleared signoff stays cleared" "$(grep -c '^## sign-off$' "$HOME/.claude/CLAUDE.md")" "0"
+cleanup
+
+# The text is user-supplied, so it has to land as data: not as a printf format
+# (% and backslash escapes) and not through shell expansion ($).
+sandbox
+install --signoff '50% %s \n $HOME $(id)'
+is "format chars and expansions are written verbatim" \
+   "$(grep -cF 'response with `50% %s \n $HOME $(id)` on its own line' "$HOME/.claude/CLAUDE.md")" "1"
+install --upgrade
+is "and survive an --upgrade round trip" \
+   "$(grep -cF 'response with `50% %s \n $HOME $(id)` on its own line' "$HOME/.claude/CLAUDE.md")" "1"
+cleanup
+
+# Backticks, tabs and newlines would break the markdown span or the
+# tab-separated manifest line, so they are refused before anything is written.
+sandbox
+if install --signoff 'a`b'; then bad "backtick in signoff refused"; else ok "backtick in signoff refused"; fi
+if install --signoff "$(printf 'a\tb')"; then bad "tab in signoff refused"; else ok "tab in signoff refused"; fi
+if install --signoff "$(printf 'a\nb')"; then bad "newline in signoff refused"; else ok "newline in signoff refused"; fi
+if install --signoff; then bad "bare --signoff refused"; else ok "bare --signoff refused"; fi
+if install --signoff --sassy; then bad "flag-looking signoff refused"; else ok "flag-looking signoff refused"; fi
+hasnt "refused runs wrote nothing" "$HOME/.claude/CLAUDE.md"
+cleanup
+
+echo
+echo "opt-in blocks: upgrade, doctor, revert"
+sandbox
+install --focus --adhd --no-coauthor
+install --upgrade
+is "--upgrade keeps focus"      "$(grep -c '^## easy to read$' "$HOME/.claude/CLAUDE.md")" "1"
+is "--upgrade keeps adhd"       "$(grep -c '^## scaffolding$' "$HOME/.claude/CLAUDE.md")" "1"
+is "--upgrade keeps no-coauthor" "$(grep -c '^## commits$' "$HOME/.claude/CLAUDE.md")" "1"
+is "--doctor reports the options" \
+   "$(HOME="$SANDBOX" bash "$INSTALLER" --doctor 2>&1 | grep -c 'focus 1 · adhd 1 · no-coauthor 1')" "1"
+revert
+hasnt "revert removes the opt-in install" "$HOME/.claude/CLAUDE.md"
+cleanup
+
+echo
 echo "a CLAUDE.md we did not write"
 sandbox
 printf '# my own rules\n' > "$HOME/.claude/CLAUDE.md"
