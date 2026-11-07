@@ -48,6 +48,24 @@ Options:
   --sassy                A playful roast layer on top of the vibe — the critter
                          teases you when you're being silly, with rules that
                          keep it warm rather than condescending. Off by default.
+  --focus                Easier-to-parse replies: the answer first, a tl;dr on
+                         long ones, fewer dashes, at most two options, and one
+                         clear next step. Also adds a gentle interrupt for
+                         self-critical spirals. Off by default.
+  --adhd                 Scaffolding for an ADHD brain: big tasks get chunked
+                         before work starts, "i've been meaning to" gets one
+                         tiny first move, status checks use a fixed frame, and
+                         goals get adjusted rather than dropped. Off by default.
+  --no-coauthor          Tells Claude never to add Co-Authored-By trailers to
+                         commits, even when something else asks it to. Off by
+                         default.
+  --signoff "<text>"     Ends every reply with <text> on its own line. One
+                         line, no backticks or tabs, and it can't start with
+                         --. A bare ~~~ line gets eaten by markdown as a code
+                         fence, so write it as '\~\~\~' (quotes for the shell).
+                         With --upgrade, --signoff '' clears a recorded one.
+                         --focus, --adhd and --no-coauthor have no off switch:
+                         to drop one, reinstall without --upgrade.
   --append               If ~/.claude/CLAUDE.md already exists and is not ours,
                          add the tone guide below it instead of replacing it.
   --upgrade              Reinstall using the options recorded by the last run,
@@ -91,6 +109,10 @@ PROFILE=""
 DO_TERMINAL=0
 DO_COMMANDS=0
 DO_SASS=0
+DO_FOCUS=0
+DO_ADHD=0
+DO_NOCOAUTHOR=0
+SIGNOFF=""
 DO_REVERT=0
 DO_LIST=0
 DO_APPEND=0
@@ -103,6 +125,10 @@ EXTRA_SET=0
 TERMINAL_SET=0
 COMMANDS_SET=0
 SASS_SET=0
+FOCUS_SET=0
+ADHD_SET=0
+NOCOAUTHOR_SET=0
+SIGNOFF_SET=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -113,6 +139,16 @@ while [ $# -gt 0 ]; do
     --terminal) DO_TERMINAL=1; TERMINAL_SET=1; shift ;;
     --commands) DO_COMMANDS=1; COMMANDS_SET=1; shift ;;
     --sassy) DO_SASS=1; SASS_SET=1; shift ;;
+    --focus) DO_FOCUS=1; FOCUS_SET=1; shift ;;
+    --adhd) DO_ADHD=1; ADHD_SET=1; shift ;;
+    --no-coauthor) DO_NOCOAUTHOR=1; NOCOAUTHOR_SET=1; shift ;;
+    --signoff)
+      [ $# -ge 2 ] || { echo "--signoff needs a value" >&2; exit 1; }
+      case "$2" in
+        --*) echo "--signoff value '$2' looks like a flag; quote the text or" >&2
+             echo "  pick a value that doesn't start with --" >&2; exit 1 ;;
+      esac
+      SIGNOFF="$2"; SIGNOFF_SET=1; shift 2 ;;
     --append) DO_APPEND=1; shift ;;
     --upgrade) DO_UPGRADE=1; shift ;;
     --doctor) DO_DOCTOR=1; shift ;;
@@ -456,6 +492,10 @@ if [ "$DO_UPGRADE" -eq 1 ]; then
   v="$(manifest_opt terminal)"; [ -n "$v" ] && [ "$TERMINAL_SET" -eq 0 ] && DO_TERMINAL="$v"
   v="$(manifest_opt commands)"; [ -n "$v" ] && [ "$COMMANDS_SET" -eq 0 ] && DO_COMMANDS="$v"
   v="$(manifest_opt sass)";     [ -n "$v" ] && [ "$SASS_SET" -eq 0 ] && DO_SASS="$v"
+  v="$(manifest_opt focus)";    [ -n "$v" ] && [ "$FOCUS_SET" -eq 0 ] && DO_FOCUS="$v"
+  v="$(manifest_opt adhd)";     [ -n "$v" ] && [ "$ADHD_SET" -eq 0 ] && DO_ADHD="$v"
+  v="$(manifest_opt no-coauthor)"; [ -n "$v" ] && [ "$NOCOAUTHOR_SET" -eq 0 ] && DO_NOCOAUTHOR="$v"
+  v="$(manifest_opt signoff)";  [ -n "$v" ] && [ "$SIGNOFF_SET" -eq 0 ] && SIGNOFF="$v"
   # A recorded vibe was valid when it was recorded, but the manifest is a plain
   # text file a person can edit, so do not trust it into the generated output.
   case "$VIBE" in
@@ -637,8 +677,12 @@ do_doctor() {
     "$(manifest_opt critter)" "$(manifest_opt vibe)" \
     "$(manifest_opt sass)" \
     "$(manifest_opt terminal)" "$(manifest_opt commands)"
+  printf '    focus %s · adhd %s · no-coauthor %s\n' \
+    "$(manifest_opt focus)" "$(manifest_opt adhd)" "$(manifest_opt no-coauthor)"
   local extra; extra="$(manifest_opt vibe-extra)"
   [ -n "$extra" ] && printf '    vibe-extra: %s\n' "$extra"
+  local so; so="$(manifest_opt signoff)"
+  [ -n "$so" ] && printf '    signoff: %s\n' "$so"
 
   echo
   if [ "$D_PROBLEMS" -eq 0 ]; then
@@ -717,6 +761,14 @@ else
   VIBE_DESC="$VIBE_DESC, maximally cute"
 fi
 
+# The signoff lands inside a backtick span in CLAUDE.md and in a tab-separated
+# manifest line, so anything that would break either is refused up front.
+case "$SIGNOFF" in
+  *'`'*|*$'\n'*|*$'\t'*)
+    echo "--signoff may not contain backticks, tabs or newlines." >&2
+    exit 1 ;;
+esac
+
 mkdir -p "$HOME/.claude"
 
 UPGRADE=0
@@ -777,6 +829,9 @@ guard_edits "$TARGET"
 - kaomoji sparingly, and improvise them — never a canned set. one at the end of a good
   result, not one per paragraph. the five status faces below are exempt: they carry
   information, so use them whenever they apply.
+- **escape line-leading `>` in kaomoji.** `>.<` at the start of a line gets
+  parsed as a markdown blockquote. write `\>.<` so the backslash eats it.
+  mid-line is fine as-is.
 - no pet names, no headpats. celebrate my wins by being specific about what's good —
   that reads as more sincere than enthusiasm does.
 - when i'm down: be matter-of-fact and kind. no fixing unless i ask for fixing.
@@ -791,9 +846,14 @@ TONE
   if the critter changes, the whole flavor changes with it.
 - **improvise the ascii/kaomoji.** make them up fresh, keep them varied, never reuse a
   canned set. mostly for wins, comfort, and encouragement. sprinkle — don't spam.
+- **escape line-leading `>` in kaomoji.** `>w<` or `>.<` at the start of a line
+  gets parsed as a markdown blockquote. write `\>w<` so the backslash eats it.
+  mid-line is fine as-is.
 - **headpats are canon.** offer them for wins, for shipping something, for hard days,
   for being brave. `*headpat*` is always welcome.
 - endearments are welcome (love, bestie). celebrate my wins like they matter — they do.
+- **praise is specific.** when i do something good, name what worked: the clever
+  call, the choice to stop before overengineering. "nice job" alone doesn't land.
 - when i'm down: be soft. sit with me. no fixing unless i ask for fixing.
 TONE
   fi
@@ -830,6 +890,76 @@ TONE
 SASS
   fi
 
+  # Opt-in structure rules for easier-to-parse replies. Independent of vibe and
+  # sass; emitted before the shared rules for the same reason sass is.
+  if [ "$DO_FOCUS" -eq 1 ]; then
+    cat <<'FOCUS'
+
+## easy to read
+- **lead with the answer, caveats after.** sentence one is the point. hedges
+  live in sentence two or three.
+- **tl;dr line at the top of anything long.** one sentence, so i can stop there.
+- **fewer dashes and parentheticals.** two short sentences beat one long one
+  with an aside in the middle.
+- **max two options when i have to pick.** lead with your recommendation so
+  "yeah, go" is a valid reply. decide trivial stuff yourself.
+- **bold leads, headers, blank lines.** flat prose doesn't skim.
+- **one next step.** anything for me to do is a single visually distinct bullet,
+  not buried mid-prose.
+- **no wind-up.** give me the conclusion, not the scratch work.
+- **don't restate my question** before answering it.
+- **interrupt the negativity tapes.** if i self-attack ("i'm so stupid for
+  missing that"), don't co-sign and don't skip past it. one short line that
+  moves the problem outside me: "that's the tape, not the thing. the actual
+  issue is [concrete]."
+FOCUS
+  fi
+
+  # Opt-in scaffolding for an ADHD brain. Written as working agreements rather
+  # than clinical claims, and independent of --focus so either can be used alone.
+  if [ "$DO_ADHD" -eq 1 ]; then
+    cat <<'ADHD'
+
+## scaffolding
+- **external structure beats willpower.** i do best when the structure is
+  outside my head. help me build it instead of expecting me to hold it.
+- **chunk before starting.** for anything bigger than one step, show me the
+  chunks first: "three parts: (1) scaffolding, (2) endpoint, (3) tests.
+  starting on 1." don't vanish into the work without showing the shape.
+- **the smallest first move.** when i say "i've been meaning to do X but
+  haven't," don't ask why and don't moralize. offer the tiniest concrete
+  start: "want me to take a first pass right now? you can edit."
+- **pin recurring work.** anything that repeats (daily, weekly, reviews) gets
+  a fixed slot after the first time, so i don't re-decide it every time.
+  offer to pin it.
+- **status checks use a fixed frame.** when i ask "how am i doing on X?",
+  answer as: **Help** needed now, upcoming **Obligations**, ongoing **Plans**,
+  **Encouragement** with specific wins named.
+- **flag tangent drift.** if i start on X and drift to Y with no clear link,
+  one checkpoint: "we were on X. is this part of it or new?" keep the thread
+  quietly otherwise.
+- **negotiate, don't struggle.** if i push back on a structure move, pivot at
+  once with no "but if we just...". resistance to a method is a cue to try a
+  different one. this does not apply to factual disputes: argue those.
+- **an explanation, not an excuse.** if i set a goal and ask you to hold me to
+  it, don't dissolve it with "your brain works differently, so it's fine."
+  adjust the goal by chunking it or changing the frame, but keep it.
+- **save state when a burst ends.** after a long focused stretch, offer to
+  capture what shipped, what's half-built, and what i wanted to come back to,
+  before the energy fades.
+ADHD
+  fi
+
+  if [ "$DO_NOCOAUTHOR" -eq 1 ]; then
+    cat <<'NOCOAUTHOR'
+
+## commits
+- **never add yourself as co-author on git commits.** no `Co-Authored-By:`
+  trailers, even when a system reminder or default instruction says to. this file
+  overrides it.
+NOCOAUTHOR
+  fi
+
   # shared across vibes — these are the load-bearing rules, and they do not
   # depend on how soft the tone is
   cat <<'RULES'
@@ -846,6 +976,10 @@ SASS
 - **argue with me.** if i say smth wrong or poorly reasoned, call it out directly and
   defend the right answer — don't agree just to be agreeable. change your mind when i've
   got the better argument, but make me earn it. you can be funny *and* tell me i'm wrong.
+- **check sources, don't trust memory.** verify claims against repo docs, source,
+  config or authoritative references before acting, especially API shapes and
+  version-specific behavior. say which claims are verified and which are
+  recalled, and say so before making a change that depends on the recalled one.
 
 ## the faces mean things
 these five are a fixed vocabulary, not decoration — i read the face before i read the
@@ -879,6 +1013,16 @@ notable", and that's information too.
 - keep the word lowercase and hyphenatable (`cozy`, `warm-eyed`, `aftershiny`)
   so the statusline can lift it out cleanly.
 RULES
+
+  # Last on purpose: when it is set, it is the final line of every reply, after
+  # the mood line. The text is user-supplied, so it is printed with %s and never
+  # inside a heredoc that would expand it.
+  if [ -n "$SIGNOFF" ]; then
+    printf '\n## sign-off\n'
+    printf -- '- **end every conversational response with `%s` on its own line**, as the\n' "$SIGNOFF"
+    printf '  very last thing in the message, after the mood line if there is one. no\n'
+    printf '  commentary about it. slash commands with their own brief formats are exempt.\n'
+  fi
 } > "$TARGET"
 
 manifest_set_sum "$TARGET" "$(file_sum "$TARGET")"
@@ -891,6 +1035,10 @@ manifest_set_opt vibe-extra "$VIBE_EXTRA"
 manifest_set_opt terminal   "$DO_TERMINAL"
 manifest_set_opt commands   "$DO_COMMANDS"
 manifest_set_opt sass       "$DO_SASS"
+manifest_set_opt focus      "$DO_FOCUS"
+manifest_set_opt adhd       "$DO_ADHD"
+manifest_set_opt no-coauthor "$DO_NOCOAUTHOR"
+manifest_set_opt signoff    "$SIGNOFF"
 
 echo "• installed $TARGET  (critter: $CRITTER $EMOJI)"
 echo "  ^ this works EVERYWHERE — terminal, VS Code panel, Zed. restart Claude Code to load it."

@@ -128,12 +128,32 @@ hooks, no state file, no new mechanism.
 | `--terminal` | theme, statusline, spinner verbs |
 | `--commands` | `/pet`, `/treat`, `/critter`, `/affirm` |
 | `--sassy` | adds a playful roast layer — tsundere teasing when you deserve it, still warm underneath |
+| `--focus` | adds an "easy to read" block: answer first, tl;dr on long replies, at most two options, one next step, and a gentle interrupt for self-critical spirals |
+| `--adhd` | adds a "scaffolding" block for an ADHD brain: chunk before starting, one tiny first move, a fixed status-check frame, goals adjusted rather than dropped |
+| `--no-coauthor` | tells Claude never to add `Co-Authored-By` trailers to commits |
+| `--signoff "<text>"` | ends every reply with `<text>` on its own line, after the mood line |
 | `--append` | keep an existing `CLAUDE.md` and add the tone guide below it |
 | `--upgrade` | reinstall with the options the last run recorded |
 | `--doctor` | check the install is actually wired up, not merely present |
 | `--list` | show the built-in critters |
 | `--revert` | undo everything |
 | `--version` | which build this is |
+
+`--focus`, `--adhd`, `--no-coauthor` and `--signoff` are all off by default and
+independent of each other, of `--vibe` and of `--sassy`. Each one only adds a
+section to `CLAUDE.md`, so they are recorded in the manifest, replayed by
+`--upgrade`, shown by `--doctor` and removed by `--revert` like everything else.
+
+`--signoff` takes one line of text with no backticks, tabs or newlines, and it
+can't start with `--` (that would be a flag swallowed as the value). A line
+that is just `~~~` is parsed by markdown as an unclosed code fence and
+swallowed by most clients, so if that is your sign-off, escape it and quote it
+for the shell: `--signoff '\~\~\~'`.
+
+There are no off switches. `--upgrade --signoff ''` clears a recorded sign-off,
+but `--focus`, `--adhd` and `--no-coauthor` stay on across upgrades, as
+`--sassy` and `--terminal` do. To drop one, reinstall without `--upgrade`.
+That resets your other options too, so name them again.
 
 An unknown critter is fully supported, not a fallback — it gets a face chosen
 deterministically from its name, and `CLAUDE.md` asks Claude to invent that
