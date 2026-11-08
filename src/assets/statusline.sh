@@ -145,4 +145,49 @@ if [ -n "$transcript" ] && [ -f "$transcript" ]; then
   fi
 fi
 
-printf '%s' "${pink}${buddy}${rst} ${lav}${base}${rst}${ctx_out}${mood_out} ${bright}${sparkle}♡${rst}"
+# 5h rate-limit usage + countdown to reset, flush-right.
+# Only appears when rate_limits is in the input (claude.ai pro/max, after the
+# first api response). Needs jq for the nested field access; without it the
+# segment is skipped and the line looks like it did before.
+rl_out=""
+if command -v jq >/dev/null 2>&1; then
+  rl_pct=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+  rl_reset=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
+  if [ -n "$rl_pct" ] && [ -n "$rl_reset" ]; then
+    rl_pct_int="${rl_pct%%.*}"
+    if [ "$rl_pct_int" -ge 80 ] 2>/dev/null;   then rl_col=$'\e[38;2;248;113;113m'   # red
+    elif [ "$rl_pct_int" -ge 50 ] 2>/dev/null; then rl_col=$'\e[38;2;252;211;77m'   # amber
+    else                                             rl_col=$'\e[38;2;134;239;172m'; fi # green
+    secs=$(( rl_reset - now ))
+    [ "$secs" -lt 0 ] && secs=0
+    if [ "$secs" -ge 3600 ]; then
+      reset_str=$(printf '%dh %dm' $(( secs / 3600 )) $(( (secs % 3600) / 60 )))
+    elif [ "$secs" -ge 60 ]; then
+      reset_str=$(printf '%dm' $(( secs / 60 )))
+    else
+      reset_str=$(printf '%ds' "$secs")
+    fi
+    rl_out="${rl_col}${rl_pct_int}% usage${rst} ${dim}·${rst} ${lav}↻ ${reset_str}${rst}"
+  fi
+fi
+
+left_text="${pink}${buddy}${rst} ${lav}${base}${rst}${ctx_out}${mood_out} ${bright}${sparkle}♡${rst}"
+
+if [ -n "$rl_out" ]; then
+  # Strip ansi to measure visible width, then pad so rl_out ends near $COLUMNS.
+  # UTF-8 locale forces wc -m to count characters (not bytes) for the critter
+  # and the ↻ arrow. The safety margin covers claude code's own UI chrome
+  # (built-in padding around the status line row) that COLUMNS doesn't report.
+  strip_ansi() { printf '%s' "$1" | sed 's/\x1b\[[0-9;]*m//g'; }
+  cols="${COLUMNS:-80}"
+  margin=6
+  cols=$(( cols - margin ))
+  left_w=$(strip_ansi "$left_text" | LC_ALL=C.UTF-8 wc -m)
+  right_w=$(strip_ansi "$rl_out" | LC_ALL=C.UTF-8 wc -m)
+  pad=$(( cols - left_w - right_w ))
+  [ "$pad" -lt 1 ] && pad=1
+  printf -v spacer '%*s' "$pad" ''
+  printf '%s%s%s' "$left_text" "$spacer" "$rl_out"
+else
+  printf '%s' "$left_text"
+fi
