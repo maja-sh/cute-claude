@@ -250,6 +250,18 @@ is "latest mood wins"                 "$(render | grep -c 'aftershiny')" "1"
 : > "$TR"
 tr_line '{"type":"assistant","message":{"content":[{"type":"text","text":"ok\nmood: warm-eyed · *purr*"}]}}'
 is "hyphenated moods are allowed"     "$(render | grep -c 'warm-eyed')" "1"
+
+# 5h rate-limit readout: only when the payload carries rate_limits, and pushed
+# flush-right so the line fills the terminal width.
+reset_at=$(( $(date +%s) + 7500 ))
+payload="{\"workspace\":{\"current_dir\":\"/tmp/proj\"},\"context_window\":{\"used_percentage\":12},\"rate_limits\":{\"five_hour\":{\"used_percentage\":42.7,\"resets_at\":$reset_at}}}"
+is "shows rate-limit usage"          "$(render | grep -c '42% usage')" "1"
+is "shows time until reset"          "$(render | grep -c '↻ 2h 4[0-9]m\|↻ 2h 5m')" "1"
+is "rate-limit segment is flush-right" \
+   "$(printf '%s' "$payload" | COLUMNS=100 STATUSLINE_FRAME=0 HOME="$SANDBOX" bash "$SL" \
+        | sed 's/\x1b\[[0-9;]*m//g' | LC_ALL=C.UTF-8 wc -m | tr -d ' ')" "94"
+payload='{"workspace":{"current_dir":"/tmp/proj"},"context_window":{"used_percentage":12}}'
+is "no rate-limit segment without data" "$(render | grep -c 'usage')" "0"
 cleanup
 
 echo

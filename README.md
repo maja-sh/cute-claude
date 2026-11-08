@@ -117,6 +117,10 @@ rule; they have their own brief formats. The statusline picks the word up
 the same way it detects `/pet` — a small tail-read of the transcript, no
 hooks, no state file, no new mechanism.
 
+On claude.ai Pro/Max plans the statusline also shows your 5-hour usage and the
+time until it resets, flush-right. It needs `jq` and quietly disappears when
+Claude Code doesn't send rate-limit data.
+
 ## Options
 
 | Flag | Meaning |
